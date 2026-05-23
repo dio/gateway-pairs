@@ -578,33 +578,185 @@ gwp pair delete 4
 
 ## Implementation notes (for when we build this)
 
-Language: Go. Shares the k8s client machinery already in the e2e suite.
-The `internal/kube` package from the e2e suite becomes a proper library.
+### Language and package layout
 
-Flag conventions:
-- `--context` overrides kubeconfig current-context (mirrors kubectl)
-- `--kubeconfig` path (mirrors kubectl)
-- `--unsafe-context` allows non-k3d contexts
-- `--output text|json|yaml` for machine-readable output
-- `--timeout` for any command that polls
+Go. The k8s client machinery already in `e2e/suite_test.go` becomes a proper
+library under `internal/`:
 
-Helm invocation: `exec.Command("helm", ...)` with `--kube-context` injected.
-Do not use the Helm Go SDK -- the exec model is simpler and matches what the
-Makefile already does. The SDK pulls in 50+ dependencies and has breaking
-API changes between minor versions.
+```
+cmd/gwp/main.go
+internal/
+  kube/        client factory, context validation, managedFields helpers
+  crd/         CRD detection, install, version comparison
+  pair/         pair status, install orchestration, verify, delete, list
+  preflight/   preflight check runners (RBAC, server version, conflicts)
+  helm/        exec-based Helm wrapper (upgrade --install, uninstall, template)
+```
 
-Kubernetes client: `k8s.io/client-go` dynamic client for CRD detection and
-status reading. Typed clients for well-known resources (Deployments, Namespaces,
-etc.). The e2e suite already has the `mustKubectl` / `eventually` patterns --
-the CLI internalizes those as library functions instead of shelling out to
-`kubectl`.
+### Flag conventions
 
-The one exception: `kubectl apply --server-side` for CRD install. The
-`--server-side` apply path requires the server-side apply merge strategy which
-is not trivially reproducible with the Go client without reimplementing the
-applier. Shell out to `kubectl apply --server-side` for CRDs only.
+- `--context` -- override kubeconfig current-context (mirrors kubectl)
+- `--kubeconfig` -- path (mirrors kubectl)
+- `--unsafe-context` -- allow non-k3d contexts
+- `--output text|json|yaml` -- machine-readable output
+- `--timeout` -- for any command that polls
 
-Exit codes:
+### hack/install-crds.sh is replaced by the CLI
+
+`hack/install-crds.sh` stays in the repo for the PoC phase when the CLI does
+not exist yet, but its entire logic lives inside `gwp crds detect` +
+`gwp crds install`. Once the CLI is built, the script becomes a one-liner:
+
+```bash
+#!/usr/bin/env bash
+exec gwp crds install "$@"
+```
+
+Or it is removed entirely and the Makefile `crds-install` target calls `gwp`
+directly. The script is not a maintained artifact in its own right.
+
+The migration: every env var the script accepts maps to a CLI flag.
+
+| Script env var | CLI flag |
+|---|---|
+| `KTX` | `--context` |
+| `EG_VERSION` | `--eg-version` |
+| `CHANNEL` | `--channel` |
+| `SKIP_GATEWAY_API_CRDS` | `--skip-gateway-api-crds` |
+| `FORCE_GATEWAY_API` | `--force-gateway-api-crds` |
+| `UNSAFE_CONTEXT` | `--unsafe-context` |
+
+### Helm invocation
+
+`exec.Command("helm", ...)` with `--kube-context` injected. Do not use the
+Helm Go SDK -- it pulls in 50+ dependencies and has breaking API changes
+between minor versions. The exec model is simpler and matches the Makefile.
+
+For `gwp pair install`, the flow is:
+
+1. `helm upgrade --install eg-pair-{i} ... --wait --timeout 120s`
+2. poll for controller Deployment Available (client-go)
+3. poll for GatewayClass Accepted (dynamic client)
+4. poll for Gateway Programmed (dynamic client)
+5. poll for Envoy proxy Deployment available (client-go)
+
+Steps 2-5 are done in Go with `client-go`, not by shelling to `kubectl`.
+
+### CRD detection: Go implementation
+
+`managedFields` inspection in Go:
+
+```go
+// internal/crd/detect.go
+
+type GatewayAPIState int
+const (
+    NotInstalled   GatewayAPIState = iota
+    SelfManaged
+    ProviderManaged
+)
+
+var knownProviderManagers = []string{
+    "gke-networking-controller",
+    "gke-gateway-api",
+    "aks-gateway-api-controller",
+    "addon-manager",
+}
+
+type DetectResult struct {
+    State          GatewayAPIState
+    BundleVersion  string
+    Channel        string
+    ProviderManager string // non-empty when ProviderManaged
+}
+
+func DetectGatewayAPICRDs(ctx context.Context, client dynamic.Interface) (DetectResult, error) {
+    crd, err := client.Resource(crdGVR).Get(ctx, "gateways.gateway.networking.k8s.io", metav1.GetOptions{})
+    if apierrors.IsNotFound(err) {
+        return DetectResult{State: NotInstalled}, nil
+    }
+    if err != nil {
+        return DetectResult{}, err
+    }
+
+    annotations := crd.GetAnnotations()
+    bundleVersion := annotations["gateway.networking.k8s.io/bundle-version"]
+    channel := annotations["gateway.networking.k8s.io/channel"]
+
+    for _, mf := range crd.GetManagedFields() {
+        for _, pm := range knownProviderManagers {
+            if mf.Manager == pm {
+                return DetectResult{
+                    State:           ProviderManaged,
+                    BundleVersion:   bundleVersion,
+                    Channel:         channel,
+                    ProviderManager: pm,
+                }, nil
+            }
+        }
+    }
+
+    return DetectResult{
+        State:         SelfManaged,
+        BundleVersion: bundleVersion,
+        Channel:       channel,
+    }, nil
+}
+```
+
+### CRD install: helm template piped to kubectl apply --server-side
+
+The `helm template | kubectl apply --server-side` chain avoids Helm's 1 MB
+release secret annotation limit. In Go, this is two exec.Command calls with
+an `io.Pipe` connecting them:
+
+```go
+// internal/crd/install.go
+
+func ApplyCRDs(ctx context.Context, helmArgs []string, kubectlContext string) error {
+    pr, pw := io.Pipe()
+
+    helmCmd := exec.CommandContext(ctx, "helm", helmArgs...)
+    helmCmd.Stdout = pw
+    helmCmd.Stderr = os.Stderr
+
+    kubectlCmd := exec.CommandContext(ctx,
+        "kubectl", "--context", kubectlContext,
+        "apply", "--server-side", "-f", "-",
+    )
+    kubectlCmd.Stdin = pr
+    kubectlCmd.Stdout = os.Stdout
+    kubectlCmd.Stderr = os.Stderr
+
+    if err := helmCmd.Start(); err != nil {
+        pw.Close()
+        return err
+    }
+    if err := kubectlCmd.Start(); err != nil {
+        pw.CloseWithError(err)
+        helmCmd.Wait()
+        return err
+    }
+
+    helmErr := helmCmd.Wait()
+    pw.CloseWithError(helmErr) // signals EOF or error to kubectl stdin
+    kubectlErr := kubectlCmd.Wait()
+
+    if helmErr != nil {
+        return fmt.Errorf("helm template: %w", helmErr)
+    }
+    return kubectlErr
+}
+```
+
+The `kubectl apply --server-side` exec is kept even in the CLI because
+reimplementing server-side apply merge strategy in Go would mean pulling in
+`sigs.k8s.io/controller-runtime` or the full `k8s.io/kubectl` package, both
+of which carry significant dependency weight and are not trivially correct
+for large CRD manifests with CEL validation rules.
+
+### Exit codes
+
 - 0: all checks passed / operation succeeded
 - 1: one or more checks failed / operation failed
 - 2: usage error (unknown flag, missing argument)
