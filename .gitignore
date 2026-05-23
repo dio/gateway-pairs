@@ -2,9 +2,19 @@
 charts/*/charts/
 *.tgz
 
+# Build artifacts
+bin/
+dist/
+
+# Generated assets (produced by make generate-assets / make generate-crds)
+# These are regenerated at build time from EG_VERSION pin.
+# .gitkeep files in these dirs ARE committed so go:embed resolves on clean checkout.
+internal/assets/charts/eg-crds/
+internal/assets/charts/eg-pair/
+internal/assets/crds/*.yaml
+
 # Go
 e2e/vendor/
-e2e/bin/
 
 # Editor
 .DS_Store
