@@ -22,8 +22,10 @@ const (
 	EGVersion = "v1.8.0"
 	k3sImage  = "rancher/k3s:v1.32.2-k3s1"
 
-	// Gateway API CRD bundle version expected after install.
-	gatewayAPIBundleVersion = "v1.2.1"
+	// Gateway API CRD bundle version shipped by gateway-crds-helm v1.8.0.
+	// Do NOT set this independently -- the version is determined by EG's chart,
+	// not by a separate Gateway API release pin.
+	gatewayAPIBundleVersion = "v1.5.1"
 )
 
 // pairsBaseSuite holds cluster lifecycle. Embed in per-scenario suites.

@@ -118,31 +118,41 @@ each of:
 
 Checks for `gateways.gateway.networking.k8s.io`. Reads the
 `gateway.networking.k8s.io/bundle-version` and
-`gateway.networking.k8s.io/channel` annotations.
+`gateway.networking.k8s.io/channel` annotations, then inspects
+`managedFields[*].manager` for provider fingerprints.
+
+**Critical: `bundle-version` alone is not a provider-managed signal.**
+That annotation is written by ANY install path -- `kubectl apply`, `helm
+template`, GKE, AKS, everyone. Non-empty means "installed", nothing more.
+The real signal is the field manager name in `managedFields`.
+
+Known provider managers (checked by `gwp`):
+- `gke-networking-controller`, `gke-gateway-api` -- GKE Standard
+- `aks-gateway-api-controller` -- AKS
+- `addon-manager` -- GKE autopilot / addon-manager pattern
 
 Four outcomes:
 
-| State | Annotation | Recommended action |
+| State | Signal | Recommended action |
 |---|---|---|
-| Not installed | absent | install with `gwp crds install` |
-| Self-managed, same version | present, no owner annotation | `--skip-gateway-api-crds` safe to skip or force-upgrade |
-| Provider-managed | present + owner annotation (e.g. `gke.io/managed`) | must skip: `gwp crds install --skip-gateway-api-crds` |
-| Wrong channel (experimental vs standard) | present + channel mismatch | warn: downgrading removes CRDs with live objects |
+| Not installed | `bundle-version` absent | install with `gwp crds install` |
+| Self-managed, same channel | bundle-version present, known manager | skip (already correct) or `--force-gateway-api-crds` to upgrade |
+| Provider-managed | known provider manager in managedFields | auto-skip; `gwp crds install` installs only EG CRDs |
+| Channel mismatch | installed channel != requested channel | block: downgrading removes CRDs with live objects |
 
 ```
-[OK]   gateway-api CRDs not installed -- will install v1.2.1 (standard)
-[WARN] gateway-api CRDs v1.1.0 (standard) already installed, will upgrade to v1.2.1
-[WARN] gateway-api CRDs managed by provider (gke-networking): skipping
-[FAIL] gateway-api CRDs installed on experimental channel; requested standard
+[OK]   gateway-api CRDs not installed -- will install (from gateway-crds-helm v1.8.0)
+[OK]   gateway-api CRDs v1.5.1 standard already installed -- skipping (--force-gateway-api-crds to upgrade)
+[WARN] gateway-api CRDs managed by gke-networking-controller (v1.5.1 standard) -- skipping
+[FAIL] gateway-api CRDs on experimental channel; requested standard
        downgrading removes TCPRoute/BackendTLSPolicy CRDs -- check for live objects first
        pass --allow-channel-downgrade to proceed (dangerous)
 ```
 
-Provider-managed detection heuristic: check for a well-known owner annotation
-(`gke.io/managed-by`, `addon-manager.kubernetes.io/mode`, etc.) OR check if
-the CRD's `managedFields` contains a field manager that is not `kubectl` /
-`helm`. The annotation check is more reliable; document that it may miss
-some providers.
+**Gateway API version is not a separate flag.** `gwp crds install` always
+installs the Gateway API version bundled by `gateway-crds-helm` at the
+requested `--eg-version`. This ensures the Gateway API and EG CRDs are
+always the co-tested pair. There is no `--gateway-api-version` flag.
 
 ### 5. EG CRD detection
 
@@ -196,7 +206,7 @@ Preflight checks for pair 1 on context k3d-gw-pairs-e2e
 [OK]   context: k3d-gw-pairs-e2e (k3d)
 [OK]   server reachable: v1.32.2
 [OK]   can create namespaces, clusterroles, clusterrolebindings
-[OK]   gateway-api CRDs not installed -- will install v1.2.1 (standard)
+[OK]   gateway-api CRDs not installed -- will install v1.5.1 (standard)
 [OK]   envoy-gateway CRDs not installed -- run: gwp crds install
 [OK]   GatewayClass tr-1 does not exist
 [OK]   namespaces tr-system-1, tr-dataplane-1 do not exist
@@ -222,12 +232,12 @@ $ gwp crds detect
 
 Gateway API CRDs:
   gateways.gateway.networking.k8s.io
-    bundle-version: v1.2.1
+    bundle-version: v1.5.1
     channel:        standard
     managed-by:     helm (field manager: helm)
 
   httproutes.gateway.networking.k8s.io
-    bundle-version: v1.2.1
+    bundle-version: v1.5.1
     channel:        standard
 
 Envoy Gateway CRDs:
@@ -258,10 +268,13 @@ path for large bundles). Runs `gwp crds detect` first and acts on the result.
 
 Flags:
 - `--skip-gateway-api-crds` -- skip Gateway API CRDs regardless of detect result
+- `--force-gateway-api-crds` -- install/upgrade Gateway API CRDs even when already present
+- `--allow-channel-downgrade` -- allow experimental -> standard downgrade (dangerous)
 - `--channel standard|experimental` -- default: standard
-- `--eg-version v1.8.0` -- EG version to install
-- `--gateway-api-version v1.2.1` -- Gateway API version
+- `--eg-version v1.8.0` -- EG version; also determines which Gateway API version is installed
 
+The Gateway API version is not a separate input. `gateway-crds-helm` at `--eg-version`
+ships the exact co-tested pair. For EG v1.8.0 that is Gateway API v1.5.1.
 ```
 $ gwp crds install
 
@@ -269,7 +282,7 @@ Detecting existing CRDs...
   gateway-api: not installed
   envoy-gateway: not installed
 
-Installing gateway-api v1.2.1 (standard) ...  done
+Installing gateway-api v1.5.1 (standard) ...  done
 Installing envoy-gateway v1.8.0 ...            done
 
 CRDs ready. Run: gwp pair install 1

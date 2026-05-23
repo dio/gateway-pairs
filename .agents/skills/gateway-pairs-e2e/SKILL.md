@@ -71,6 +71,14 @@ limit breaks on large CRD bundles. The correct path:
 KTX=k3d-gw-pairs-e2e EG_VERSION=v1.8.0 ./hack/install-crds.sh
 ```
 
+The script uses `gateway-crds-helm` for both Gateway API and EG CRDs.
+Do NOT pin `GATEWAY_API_VERSION` separately -- `gateway-crds-helm` at
+`EG_VERSION` ships the exact co-tested pair (EG v1.8.0 -> Gateway API v1.5.1).
+
+Provider-managed detection uses `managedFields[*].manager`, not the
+`bundle-version` annotation. `bundle-version` is set by ANY install path
+and is not a reliable provider-ownership signal.
+
 Or via Make:
 
 ```bash
