@@ -441,6 +441,10 @@ gwp
     verify <index>      re-run post-install checks without reinstalling
     delete <index>      uninstall a pair and clean up cluster-scoped resources
     list                list all pairs detected in the cluster
+  charts
+    list                list embedded charts and bundled CRD versions
+    export              export embedded charts to a directory
+    show <chart>        print default values for an embedded chart
   version               print gwp version
 ```
 
@@ -652,6 +656,7 @@ Flags:
 - `--allow-channel-downgrade` -- allow experimental -> standard downgrade (dangerous)
 - `--channel standard|experimental` -- default: standard
 - `--eg-version v1.8.0` -- EG version; also determines which Gateway API version is installed
+- `--dry-run` -- validate manifests against the cluster without persisting (server-side dry-run)
 
 The Gateway API version is not a separate input. `gateway-crds-helm` at `--eg-version`
 ships the exact co-tested pair. For EG v1.8.0 that is Gateway API v1.5.1.
@@ -692,9 +697,11 @@ if verification fails within the timeout.
 
 Flags:
 - `--timeout 3m` -- total verification timeout (default: 3m)
-- `--chart-path ./charts/eg-pair` -- path to local chart (default: OCI ref when published)
+- `--chart ./charts/eg-pair` -- override chart source; accepts a local path or any OCI ref.
+  Default: `oci://ghcr.io/dio/gateway-pairs/charts/eg-pair:<version>` (bundled version).
+  When omitted, gwp extracts the embedded chart to a temp dir -- no network access needed.
 - `--eg-version v1.8.0` -- controller image tag
-- `--dry-run` -- `helm template` only, print manifests, no apply
+- `--dry-run` -- render and validate manifests without applying; see dry-run section below
 - `--set key=value` -- passed through to helm
 
 ```
