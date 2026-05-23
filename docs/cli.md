@@ -3,9 +3,389 @@
 A single binary, `gwp`, that wraps the operational surface of gateway-pairs:
 preflight checks, CRD lifecycle management, pair install/status/teardown,
 and post-install verification. It is a tool for operators and CI pipelines,
-not a replacement for Helm -- Helm is still the install mechanism. `gwp`
-handles what Helm cannot: detection, validation, ordering, and readable
-cluster state.
+not a replacement for Helm -- Helm is still the install mechanism for the
+`eg-pair` chart. `gwp` handles what Helm cannot: detection, validation,
+ordering, and readable cluster state.
+
+Every release of `gwp` ships with the charts and CRD manifests embedded
+inside the binary. Operators do not need Helm repos, OCI registry access,
+or separate chart downloads to install. They need one binary and `kubectl`.
+
+---
+
+## Embedded assets
+
+The binary carries three asset groups, all via `//go:embed`:
+
+```
+internal/assets/
+  charts/
+    eg-crds/      -- our CRD metadata chart (full chart tree)
+    eg-pair/      -- our pair chart (full chart tree)
+  crds/
+    gateway-api-standard.yaml     -- pre-rendered Gateway API standard CRDs
+    gateway-api-experimental.yaml -- pre-rendered Gateway API experimental CRDs
+    envoy-gateway.yaml            -- pre-rendered EG CRDs
+```
+
+The CRD YAML files under `internal/assets/crds/` are **generated at build
+time**, not committed to the repo. They are produced by running
+`helm template gateway-crds-helm` during the release build and embedded
+via `//go:embed`. At runtime, `gwp crds install` pipes them straight to
+`kubectl apply --server-side` -- no OCI registry access, no Helm required
+for CRDs.
+
+The charts under `internal/assets/charts/` ARE committed -- they are the
+same files in `charts/`. A symlink or a `go generate` copy step keeps them
+in sync; see the build section below.
+
+### Why pre-render CRDs but not the pair chart
+
+CRD YAML is cluster-wide, version-pinned, and has no per-install
+parameterization. Pre-rendering it at build time is safe and makes
+`gwp crds install` hermetic: the same binary on two different machines
+installs identical CRD bytes regardless of network or OCI availability.
+
+The `eg-pair` chart MUST be installed via Helm because Helm release tracking
+is valuable: `helm uninstall`, `helm status`, `helm history`, and
+`helm upgrade` all work correctly because Helm owns the release secret.
+Pre-rendering it would lose that. Instead, at install time `gwp` extracts
+the embedded chart to a temp dir and passes the path to `helm upgrade --install`.
+
+---
+
+## Build process
+
+### Chart embedding (committed)
+
+`internal/assets/charts/` mirrors `charts/` via a `go generate` step that
+copies at build time:
+
+```makefile
+# Makefile
+generate-assets: generate-crds
+\t@mkdir -p internal/assets/charts
+\t@cp -r charts/eg-crds internal/assets/charts/
+\t@cp -r charts/eg-pair  internal/assets/charts/
+```
+
+The copy is cheap. The alternative (symlinks through `//go:embed`) does not
+work -- `go:embed` does not follow symlinks.
+
+### CRD generation (not committed, generated at build/release time)
+
+```makefile
+EG_VERSION ?= v1.8.0
+
+generate-crds:
+\t@mkdir -p internal/assets/crds
+\thelm template gateway-api-crds oci://docker.io/envoyproxy/gateway-crds-helm \
+\t  --version $(EG_VERSION) \
+\t  --set crds.gatewayAPI.enabled=true \
+\t  --set crds.gatewayAPI.channel=standard \
+\t  --set crds.envoyGateway.enabled=false \
+\t  > internal/assets/crds/gateway-api-standard.yaml
+\thelm template gateway-api-crds oci://docker.io/envoyproxy/gateway-crds-helm \
+\t  --version $(EG_VERSION) \
+\t  --set crds.gatewayAPI.enabled=true \
+\t  --set crds.gatewayAPI.channel=experimental \
+\t  --set crds.envoyGateway.enabled=false \
+\t  > internal/assets/crds/gateway-api-experimental.yaml
+\thelm template eg-crds oci://docker.io/envoyproxy/gateway-crds-helm \
+\t  --version $(EG_VERSION) \
+\t  --set crds.gatewayAPI.enabled=false \
+\t  --set crds.envoyGateway.enabled=true \
+\t  > internal/assets/crds/envoy-gateway.yaml
+\t@echo "generated CRDs for EG $(EG_VERSION)"
+
+build: generate-assets
+\tgo build -ldflags="-X main.version=$(VERSION) -X main.egVersion=$(EG_VERSION)" \
+\t  -o bin/gwp ./cmd/gwp
+```
+
+`internal/assets/crds/` is in `.gitignore`. CI runs `make generate-crds`
+before `make build`. Local builds also run it; the rule is idempotent.
+
+### .gitignore additions
+
+```
+internal/assets/crds/
+internal/assets/charts/
+bin/
+```
+
+### Version baking
+
+Three values baked in at link time:
+
+```go
+// cmd/gwp/main.go
+var (
+    version   = "dev"      // gwp release tag, e.g. v0.1.0
+    egVersion = "v1.8.0"   // EG version the CRDs were generated from
+    // gatewayAPIVersion is read at runtime from the embedded CRD annotations
+    // to avoid a fourth baked variable that can drift.
+)
+```
+
+`gwp version` output:
+
+```
+gwp v0.1.0
+  bundled eg-version:          v1.8.0
+  bundled gateway-api-version: v1.5.1 (standard)
+  chart eg-crds:               0.1.0
+  chart eg-pair:               0.1.0
+```
+
+`gatewayAPIBundleVersion` is extracted at runtime by parsing the
+`gateway.networking.k8s.io/bundle-version` annotation from the first CRD
+document in `gateway-api-standard.yaml`. No extra baked variable needed.
+
+---
+
+## gwp charts subcommand
+
+Exports the embedded charts to disk for operators who prefer direct Helm
+workflows or need to inspect, diff, or customize the templates.
+
+```
+gwp charts
+  list            list embedded charts with versions
+  export          export all charts to a directory
+  show <chart>    equivalent of: helm show values <chart>
+```
+
+### gwp charts list
+
+```
+$ gwp charts list
+
+CHART     VERSION  APP-VERSION
+eg-crds   0.1.0    v1.8.0
+eg-pair   0.1.0    v1.8.0
+
+Bundled CRDs:
+  Gateway API  v1.5.1  standard
+  Gateway API  v1.5.1  experimental
+  Envoy Gateway v1.8.0
+```
+
+### gwp charts export
+
+```
+$ gwp charts export --output-dir ./my-charts
+
+Exporting charts to ./my-charts/
+  wrote ./my-charts/eg-crds/
+  wrote ./my-charts/eg-pair/
+
+To install manually:
+  kubectl apply --server-side -f <(helm template ./my-charts/eg-crds)
+  helm upgrade --install eg-pair-1 ./my-charts/eg-pair \
+    --namespace tr-system-1 --create-namespace \
+    --set pair.index=1 --skip-crds
+```
+
+### gwp charts show
+
+```
+$ gwp charts show eg-pair
+
+# Default values for eg-pair.
+pair:
+  index: 1
+controller:
+  image:
+    repository: docker.io/envoyproxy/gateway
+    tag: v1.8.0
+...
+```
+
+Implemented as `helm show values <tmpdir/chart>` where `<tmpdir>` is the
+embedded chart extracted to a temp dir. Or, since `values.yaml` is a
+known file in the embedded FS, read it directly without shelling to Helm.
+
+---
+
+## gwp crds install with embedded CRDs
+
+Once embedded CRDs exist, `gwp crds install` no longer calls Helm or hits
+OCI at runtime. It reads from the embedded FS and pipes to kubectl:
+
+```go
+// internal/crd/install.go
+
+//go:embed ../../internal/assets/crds
+var embeddedCRDs embed.FS
+
+func InstallGatewayAPICRDs(ctx context.Context, channel, kubectlContext string) error {
+    filename := "internal/assets/crds/gateway-api-standard.yaml"
+    if channel == "experimental" {
+        filename = "internal/assets/crds/gateway-api-experimental.yaml"
+    }
+    data, err := embeddedCRDs.ReadFile(filename)
+    if err != nil {
+        return err
+    }
+    return applyServerSide(ctx, kubectlContext, bytes.NewReader(data))
+}
+
+func InstallEGCRDs(ctx context.Context, kubectlContext string) error {
+    data, err := embeddedCRDs.ReadFile("internal/assets/crds/envoy-gateway.yaml")
+    if err != nil {
+        return err
+    }
+    return applyServerSide(ctx, kubectlContext, bytes.NewReader(data))
+}
+
+func applyServerSide(ctx context.Context, kubectlContext string, r io.Reader) error {
+    cmd := exec.CommandContext(ctx,
+        "kubectl", "--context", kubectlContext,
+        "apply", "--server-side", "-f", "-",
+    )
+    cmd.Stdin = r
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+    return cmd.Run()
+}
+```
+
+No `io.Pipe` needed -- the embedded bytes are already in memory. The
+`helm template | kubectl` pipe (documented in the previous section) is
+only needed for the PoC phase before `generate-crds` is wired up.
+
+---
+
+## gwp pair install with embedded chart
+
+The `eg-pair` chart is extracted to a temp dir and passed to Helm:
+
+```go
+// internal/pair/install.go
+
+//go:embed ../../internal/assets/charts
+var embeddedCharts embed.FS
+
+func extractChart(name string) (string, func(), error) {
+    dir, err := os.MkdirTemp("", "gwp-chart-*")
+    if err != nil {
+        return "", nil, err
+    }
+    cleanup := func() { os.RemoveAll(dir) }
+
+    root := "internal/assets/charts/" + name
+    err = fs.WalkDir(embeddedCharts, root, func(path string, d fs.DirEntry, err error) error {
+        if err != nil || d.IsDir() {
+            return err
+        }
+        rel, _ := filepath.Rel(root, path)
+        dst := filepath.Join(dir, rel)
+        if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+            return err
+        }
+        data, err := embeddedCharts.ReadFile(path)
+        if err != nil {
+            return err
+        }
+        return os.WriteFile(dst, data, 0644)
+    })
+    if err != nil {
+        cleanup()
+        return "", nil, err
+    }
+    return dir, cleanup, nil
+}
+
+func Install(ctx context.Context, index int, opts InstallOpts) error {
+    chartDir, cleanup, err := extractChart("eg-pair")
+    if err != nil {
+        return err
+    }
+    defer cleanup()
+
+    sysNS := fmt.Sprintf("tr-system-%d", index)
+    release := fmt.Sprintf("eg-pair-%d", index)
+
+    args := []string{
+        "upgrade", "--install", release, chartDir,
+        "--kube-context", opts.Context,
+        "--namespace", sysNS,
+        "--create-namespace",
+        "--set", fmt.Sprintf("pair.index=%d", index),
+        "--skip-crds",
+        "--wait", "--timeout", opts.Timeout.String(),
+    }
+    for _, kv := range opts.ExtraSet {
+        args = append(args, "--set", kv)
+    }
+
+    cmd := exec.CommandContext(ctx, "helm", args...)
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+    if err := cmd.Run(); err != nil {
+        return fmt.Errorf("helm upgrade --install: %w", err)
+    }
+
+    return verify(ctx, index, opts.Context, opts.Timeout)
+}
+```
+
+Temp dir cleanup is deferred. If Helm exits non-zero the error is
+propagated and the temp dir is cleaned. No chart files are left on disk
+after the command returns.
+
+---
+
+## Upgrade path
+
+When a new `gwp` release ships with updated charts or CRD versions:
+
+```bash
+# upgrade CRDs first (embedded, no OCI needed)
+gwp crds install --force-gateway-api-crds
+
+# re-install pairs with the new chart (embedded)
+gwp pair install 1
+gwp pair install 2
+
+# verify
+gwp pair status
+```
+
+`gwp pair install` is idempotent -- it runs `helm upgrade --install`, which
+upgrades an existing release if one exists.
+
+The operator does not need to know which chart version changed, which CRD
+fields were added, or which EG image tag to use. The binary is the version.
+
+---
+
+## Air-gapped installs
+
+`gwp crds install` and `gwp pair install` both work without internet access:
+- CRD YAML is embedded and applied directly to the cluster
+- The `eg-pair` chart is extracted from the binary and passed to local Helm
+
+The only external dependency is the EG controller image
+(`docker.io/envoyproxy/gateway:v1.8.0`). In air-gapped environments, mirror
+that image to an internal registry and override:
+
+```bash
+gwp pair install 1 --set controller.image.repository=registry.internal/envoyproxy/gateway
+```
+
+---
+
+## Release checklist
+
+1. Bump `EG_VERSION` in Makefile if upgrading EG.
+2. Run `make generate-crds` locally and inspect the diff of the generated YAML.
+3. Run `make build` -- binary embeds fresh CRDs and charts.
+4. Run `make e2e` -- installs from embedded assets, not from OCI.
+5. Tag and push -- CI builds the release binary with the same `EG_VERSION`.
+6. `gwp version` on the release binary should show the correct bundled versions.
+
 
 ## Why a CLI
 
