@@ -1,0 +1,8 @@
+apiVersion: v2
+name: eg-pair
+description: >
+  One Envoy Gateway controller+dataplane pair. Deploy one release per pair.
+  Requires eg-crds to be installed first.
+type: application
+version: 0.1.0
+appVersion: "1.8.0"

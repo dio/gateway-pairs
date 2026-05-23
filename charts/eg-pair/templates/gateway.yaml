@@ -1,0 +1,28 @@
+{{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
+{{- $gcName := include "eg-pair.gatewayClassName" . }}
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ $sysNS }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+spec:
+  gatewayClassName: {{ $gcName }}
+  listeners:
+  {{- range .Values.gateway.listeners }}
+  - name: {{ .name }}
+    port: {{ .port }}
+    protocol: {{ .protocol }}
+    allowedRoutes:
+      namespaces:
+        # 'Selector' permits HTTPRoutes from tr-dataplane-{i} to attach here.
+        # kubernetes.io/metadata.name is auto-set by k8s on every namespace.
+        from: Selector
+        selector:
+          matchLabels:
+            kubernetes.io/metadata.name: {{ $dpNS }}
+  {{- end }}

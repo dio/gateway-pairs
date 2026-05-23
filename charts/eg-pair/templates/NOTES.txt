@@ -1,0 +1,18 @@
+Pair {{ .Values.pair.index }} deployed.
+
+System namespace:    {{ include "eg-pair.systemNamespace" . }}
+Dataplane namespace: {{ include "eg-pair.dataplaneNamespace" . }}
+GatewayClass:        {{ include "eg-pair.gatewayClassName" . }}
+
+Wait for the controller:
+  kubectl rollout status deployment/envoy-gateway \
+    -n {{ include "eg-pair.systemNamespace" . }} --timeout=120s
+
+Then check Gateway status:
+  kubectl get gateway {{ .Values.gateway.name }} \
+    -n {{ include "eg-pair.systemNamespace" . }}
+
+Tenants attach HTTPRoutes from {{ include "eg-pair.dataplaneNamespace" . }}:
+  parentRefs:
+  - namespace: {{ include "eg-pair.systemNamespace" . }}
+    name: {{ .Values.gateway.name }}

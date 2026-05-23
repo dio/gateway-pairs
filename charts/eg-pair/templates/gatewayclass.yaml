@@ -1,0 +1,17 @@
+{{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- $gcName := include "eg-pair.gatewayClassName" . }}
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ $gcName }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: eg
+    namespace: {{ $sysNS }}

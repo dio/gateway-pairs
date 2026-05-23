@@ -1,0 +1,6 @@
+apiVersion: v2
+name: eg-crds
+description: Gateway API and Envoy Gateway CRDs -- install once per cluster.
+type: application
+version: 0.1.0
+appVersion: "1.8.0"

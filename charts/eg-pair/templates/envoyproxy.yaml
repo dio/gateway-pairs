@@ -1,0 +1,24 @@
+{{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- $gcName := include "eg-pair.gatewayClassName" . }}
+
+# EnvoyProxy configures the data-plane behaviour for this pair.
+# Referenced by the GatewayClass parametersRef.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: eg
+  namespace: {{ $sysNS }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        pod:
+          labels:
+            eg-pair: {{ .Values.pair.index | quote }}
+            eg-role: dataplane
+      envoyService:
+        type: ClusterIP

@@ -1,0 +1,12 @@
+# Helm
+charts/*/charts/
+*.tgz
+
+# Go
+e2e/vendor/
+e2e/bin/
+
+# Editor
+.DS_Store
+.idea/
+*.swp

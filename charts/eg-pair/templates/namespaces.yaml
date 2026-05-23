@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "eg-pair.systemNamespace" . }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+    eg-role: system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "eg-pair.dataplaneNamespace" . }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+    eg-role: dataplane
+    # kubernetes.io/metadata.name is auto-set by k8s; listed here for documentation only.
+    # The allowedRoutes selector relies on it -- no extra labeling step required.

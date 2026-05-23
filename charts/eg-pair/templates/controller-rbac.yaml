@@ -1,0 +1,98 @@
+{{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
+{{- $prefix := include "eg-pair.prefix" . }}
+
+# Leader election lease in system namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: envoy-gateway-leader-election
+  namespace: {{ $sysNS }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: envoy-gateway-leader-election
+  namespace: {{ $sysNS }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: envoy-gateway-leader-election
+subjects:
+- kind: ServiceAccount
+  name: envoy-gateway
+  namespace: {{ $sysNS }}
+---
+# Cluster-scoped: EG needs to watch Gateway API resources across all namespaces
+# and manage GatewayClass status.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $prefix }}-gateway-controller
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+rules:
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+    - gatewayclasses
+    - gateways
+    - httproutes
+    - grpcroutes
+    - tcproutes
+    - tlsroutes
+    - udproutes
+    - referencegrants
+    - backendtlspolicies
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+    - gatewayclasses/status
+    - gateways/status
+    - httproutes/status
+    - grpcroutes/status
+  verbs: ["update", "patch"]
+- apiGroups: ["gateway.envoyproxy.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["secrets", "configmaps", "namespaces", "services", "serviceaccounts", "endpoints", "nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $prefix }}-gateway-controller
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $prefix }}-gateway-controller
+subjects:
+- kind: ServiceAccount
+  name: envoy-gateway
+  namespace: {{ $sysNS }}

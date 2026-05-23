@@ -1,0 +1,88 @@
+{{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
+{{- $prefix := include "eg-pair.prefix" . }}
+
+{{/* ── tokenreviews ClusterRole (cluster-scoped) ────────────────────────── */}}
+{{- if and .Values.rbac.tokenreviews (not .Values.rbac.sharedTokenreviewsClusterRole) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $prefix }}-tokenreviews
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+rules:
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["tokenreviews"]
+  verbs: ["create"]
+---
+{{- end }}
+
+{{/* ── tokenreviews ClusterRoleBinding ─────────────────────────────────── */}}
+{{- if .Values.rbac.tokenreviews }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $prefix }}-tokenreviews
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  {{- if .Values.rbac.sharedTokenreviewsClusterRole }}
+  name: {{ .Values.rbac.sharedTokenreviewsClusterRole }}
+  {{- else }}
+  name: {{ $prefix }}-tokenreviews
+  {{- end }}
+subjects:
+- kind: ServiceAccount
+  name: envoy-gateway
+  namespace: {{ $sysNS }}
+---
+{{- end }}
+
+{{/* ── infra-manager Role in dataplane namespace ──────────────────────── */}}
+{{- if .Values.rbac.infraManager }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: infra-manager
+  namespace: {{ $dpNS }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+rules:
+- apiGroups: [""]
+  resources: ["serviceaccounts", "services", "configmaps"]
+  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets"]
+  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["clustertrustbundles"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: infra-manager
+  namespace: {{ $dpNS }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: infra-manager
+subjects:
+- kind: ServiceAccount
+  name: envoy-gateway
+  namespace: {{ $sysNS }}
+{{- end }}

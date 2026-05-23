@@ -1,0 +1,50 @@
+# pair.index is the canonical identity for this pair.
+# All namespace and resource names are derived from it unless overridden.
+pair:
+  index: 1
+
+# Derived names (override only if you need non-standard naming):
+#   systemNamespace:   tr-system-{{ pair.index }}
+#   dataplaneNamespace: tr-dataplane-{{ pair.index }}
+#   gatewayClassName:   tr-{{ pair.index }}
+
+# EG controller image. Must match the installed CRD version.
+controller:
+  image:
+    repository: docker.io/envoyproxy/gateway
+    tag: v1.8.0
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Watch mode for Gateway Namespace mode.
+# Namespaces: explicit list (narrower RBAC, good for static N).
+# NamespaceSelector: dynamic label-based discovery (ClusterRole required).
+watch:
+  mode: Namespaces   # Namespaces | NamespaceSelector
+  namespaceSelector: {}  # used only when mode: NamespaceSelector
+
+# Gateway resource deployed into the system namespace.
+# Tenants attach HTTPRoutes from the dataplane namespace via allowedRoutes.
+gateway:
+  name: eg
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+
+# RBAC switches. Normally both true.
+rbac:
+  # Cluster-scoped tokenreviews/create required for JWT-based xDS auth.
+  tokenreviews: true
+  # Namespace-scoped infra-manager Role in the dataplane namespace.
+  infraManager: true
+  # If non-empty, skip creating the ClusterRole and bind to this existing one.
+  # Useful when multiple pairs share a single shared tokenreviews ClusterRole.
+  sharedTokenreviewsClusterRole: ""

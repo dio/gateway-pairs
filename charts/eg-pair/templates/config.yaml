@@ -1,0 +1,33 @@
+{{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-gateway-config
+  namespace: {{ $sysNS }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    eg-pair: {{ .Values.pair.index | quote }}
+data:
+  envoy-gateway.yaml: |
+    apiVersion: gateway.envoyproxy.io/v1alpha1
+    kind: EnvoyGateway
+    gateway:
+      controllerName: gateway.envoyproxy.io/gatewayclass-controller
+    provider:
+      type: Kubernetes
+      kubernetes:
+        deploy:
+          type: GatewayNamespace
+        watch:
+          type: Namespaces
+          namespaces:
+{{- if eq .Values.watch.mode "Namespaces" }}
+          - {{ $sysNS }}
+          - {{ $dpNS }}
+{{- else }}
+{{- fail "watch.mode NamespaceSelector not yet wired; set watch.mode=Namespaces" }}
+{{- end }}
+    extensionApis:
+      enableEnvoyPatchPolicy: true
