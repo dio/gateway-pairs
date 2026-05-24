@@ -2,9 +2,10 @@ package simple_test
 
 import (
 	"net/http"
+
+	"github.com/dio/gateway-pairs/e2e/testutil"
 	"os/exec"
 	"strings"
-	"testing"
 	"time"
 )
 
@@ -57,8 +58,8 @@ func (s *simpleSuite) Test03_GatewayClassAccepted() {
 func (s *simpleSuite) Test04_ApplyTier() {
 	n := namesFor(1)
 	s.T().Logf("applying Layer 3 into %s", n.DataplaneNS)
-	s.apply(n.DataplaneNS, testEnvoyProxy(n.DataplaneNS, n.GWClass))
-	s.apply(n.DataplaneNS, testGateway(n.DataplaneNS, n.GWClass))
+	s.apply(n.DataplaneNS, testutil.TestEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
+	s.apply(n.DataplaneNS, testutil.TestGatewayManifest(n.DataplaneNS, n.GWClass))
 	s.eventually(func() bool {
 		out, err := s.kubectl("get", "gateway", "eg-test", "-n", n.DataplaneNS,
 			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
@@ -69,11 +70,11 @@ func (s *simpleSuite) Test04_ApplyTier() {
 
 func (s *simpleSuite) Test05_Traffic() {
 	n := namesFor(1)
-	s.apply(n.DataplaneNS, echoDeployment(n.DataplaneNS))
-	s.apply(n.DataplaneNS, echoService(n.DataplaneNS))
+	s.apply(n.DataplaneNS, testutil.EchoDeploymentManifest(n.DataplaneNS))
+	s.apply(n.DataplaneNS, testutil.EchoServiceManifest(n.DataplaneNS))
 	s.mustKubectl("rollout", "status", "deployment/echo",
 		"-n", n.DataplaneNS, "--timeout=90s")
-	s.apply(n.DataplaneNS, httpRoute("eg-test", n.DataplaneNS))
+	s.apply(n.DataplaneNS, testutil.HTTPRouteManifest("eg-test", n.DataplaneNS))
 
 	gwSvc := s.findGWSvc(n.DataplaneNS)
 	stopFwd := s.portForward(n.DataplaneNS, "svc/"+gwSvc, "18080:80")

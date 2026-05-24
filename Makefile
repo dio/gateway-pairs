@@ -118,10 +118,10 @@ e2e:
 	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) RUN_E2E=1 \
 	  go test -v -count=1 -tags=e2e -run TestGatewayPairs -timeout 20m ./multipairs/...
 
-## e2e-simple: run single-pair sanity check (~2 minutes)
+## e2e-simple: run single-pair sanity check (~3 minutes)
 e2e-simple:
 	cd e2e && RUN_E2E=1 \
-	  go test -v -count=1 -tags=e2e -run TestSimplePair -timeout 5m ./simple/...
+	  go test -v -count=1 -run TestSimplePair -timeout 5m ./simple/...
 
 ## clean: remove build artifacts and generated CRDs
 clean:

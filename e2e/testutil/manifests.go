@@ -1,5 +1,5 @@
 // Package helper provides shared utilities for gateway-pairs e2e tests.
-package helper
+package testutil
 
 import "fmt"
 
