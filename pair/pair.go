@@ -1,0 +1,370 @@
+// Package pair manages the lifecycle of gateway-pairs eg-pair Helm releases.
+package pair
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/dio/gateway-pairs/charts"
+	"github.com/dio/gateway-pairs/internal/helm"
+	"github.com/dio/gateway-pairs/names"
+)
+
+// Kubectl is the subset of kube.Client used by this package.
+type Kubectl interface {
+	Output(ctx context.Context, args ...string) (string, error)
+}
+
+// Helmer is the subset of helm.Client used by this package.
+type Helmer interface {
+	Run(ctx context.Context, stdout, stderr io.Writer, args ...string) error
+	List(ctx context.Context, filterRegex string) ([]helm.Release, error)
+}
+
+// Status summarises the health of one installed pair.
+type Status struct {
+	Index        int
+	Names        names.Pair
+	HelmStatus   string // deployed | failed | pending-install | ...
+	Controller   ControllerStatus
+	GatewayClass GatewayClassStatus
+	L3Gateways   []GatewayStatus
+}
+
+// ControllerStatus describes the EG controller Deployment.
+type ControllerStatus struct {
+	Available bool
+	Ready     string // "1/1", "0/1", etc.
+}
+
+// GatewayClassStatus describes the cluster-scoped GatewayClass for this pair.
+type GatewayClassStatus struct {
+	Accepted bool
+	Reason   string
+}
+
+// GatewayStatus describes one operator-applied Gateway in the dataplane namespace.
+type GatewayStatus struct {
+	Name           string
+	Programmed     bool
+	EnvoyProxyName string // from infrastructure.parametersRef
+	ProxyReady     string // "1/1", "-"
+}
+
+// InstallOptions controls pair installation.
+type InstallOptions struct {
+	// Prefix is the name prefix (e.g. "tr"). Default: "tr".
+	Prefix string
+	// ExtraSet are additional --set flags passed to helm.
+	ExtraSet []string
+	// HelmTimeout is the --timeout value for helm upgrade --install.
+	HelmTimeout time.Duration
+	// WaitTimeout is how long to poll for readiness after helm returns.
+	WaitTimeout time.Duration
+	// Out receives progress output.
+	Out io.Writer
+}
+
+// Install installs or upgrades an eg-pair Helm release.
+// It extracts the embedded chart to a temp dir, invokes helm upgrade --install
+// with all required per-pair flags, then waits for the controller and GatewayClass
+// to be ready.
+func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, opts InstallOptions) error {
+	if opts.Prefix == "" {
+		opts.Prefix = "tr"
+	}
+	if opts.HelmTimeout == 0 {
+		opts.HelmTimeout = 5 * time.Minute
+	}
+	if opts.WaitTimeout == 0 {
+		opts.WaitTimeout = 3 * time.Minute
+	}
+	if opts.Out == nil {
+		opts.Out = os.Stdout
+	}
+
+	n := names.For(opts.Prefix, index)
+
+	chartDir, cleanup, err := extractChart()
+	if err != nil {
+		return fmt.Errorf("extract chart: %w", err)
+	}
+	defer cleanup()
+
+	watchNS := fmt.Sprintf("{%s,%s}", n.SystemNS, n.DataplaneNS)
+
+	args := []string{
+		"upgrade", "--install", n.ReleaseName, chartDir,
+		"--namespace", n.SystemNS,
+		"--create-namespace",
+		"--set", fmt.Sprintf("pair.index=%d", index),
+		"--set", "pair.namePrefix=" + opts.Prefix,
+		"--set", "gateway-helm.config.envoyGateway.gateway.controllerName=" + n.ControllerName,
+		"--set", "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces",
+		"--set", "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces=" + watchNS,
+		"--skip-crds",
+		"--timeout", helmTimeout(opts.HelmTimeout),
+	}
+	for _, s := range opts.ExtraSet {
+		args = append(args, "--set", s)
+	}
+
+	fmt.Fprintf(opts.Out, "Installing %s into %s...\n", n.ReleaseName, n.SystemNS)
+	if err := helmClient.Run(ctx, opts.Out, os.Stderr, args...); err != nil {
+		return fmt.Errorf("helm upgrade --install %s: %w", n.ReleaseName, err)
+	}
+
+	fmt.Fprintf(opts.Out, "Waiting for controller (%s/envoy-gateway)... ", n.SystemNS)
+	if err := waitController(ctx, kubeClient, n.SystemNS, opts.WaitTimeout); err != nil {
+		return fmt.Errorf("controller not ready: %w", err)
+	}
+	fmt.Fprintln(opts.Out, "ok")
+
+	fmt.Fprintf(opts.Out, "Waiting for GatewayClass %s to be Accepted... ", n.GatewayClass)
+	if err := waitGatewayClass(ctx, kubeClient, n.GatewayClass, opts.WaitTimeout); err != nil {
+		return fmt.Errorf("GatewayClass not Accepted: %w", err)
+	}
+	fmt.Fprintln(opts.Out, "ok")
+
+	fmt.Fprintf(opts.Out, "\nPair %d ready. Apply Layer 3 resources:\n\n", index)
+	fmt.Fprintf(opts.Out, "  kubectl apply -n %s -f envoyproxies.yaml\n", n.DataplaneNS)
+	fmt.Fprintf(opts.Out, "  kubectl apply -n %s -f gateways.yaml     # gatewayClassName: %s\n", n.DataplaneNS, n.GatewayClass)
+	fmt.Fprintf(opts.Out, "  kubectl apply -n %s -f httproutes.yaml\n\n", n.DataplaneNS)
+	fmt.Fprintf(opts.Out, "  gwp pair info %d   for the exact values needed in your Gateway manifests.\n", index)
+	return nil
+}
+
+// Delete uninstalls an eg-pair Helm release after ensuring Gateways are removed.
+// Callers should delete all Gateways in the dataplane namespace before calling
+// Delete; this function verifies that no EG-managed Deployments remain before
+// proceeding so that proxy finalizers do not block namespace termination.
+func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix string, out io.Writer) error {
+	if prefix == "" {
+		prefix = "tr"
+	}
+	if out == nil {
+		out = os.Stdout
+	}
+	n := names.For(prefix, index)
+
+	// Warn if EG-managed Deployments still exist (proxy finalizers will block NS termination).
+	deployments, _ := kubeClient.Output(ctx,
+		"get", "deployments", "-n", n.DataplaneNS,
+		"-l", "app.kubernetes.io/managed-by=envoy-gateway",
+		"-o", "jsonpath={.items[*].metadata.name}",
+		"--ignore-not-found")
+	if strings.TrimSpace(deployments) != "" {
+		fmt.Fprintf(out, "[WARN] EG-managed Deployments still exist in %s: %s\n", n.DataplaneNS, deployments)
+		fmt.Fprintf(out, "       Delete all Gateways first to clear proxy finalizers:\n")
+		fmt.Fprintf(out, "       kubectl delete gateways --all -n %s --wait=true\n\n", n.DataplaneNS)
+	}
+
+	fmt.Fprintf(out, "Uninstalling %s from %s...\n", n.ReleaseName, n.SystemNS)
+	if err := helmClient.Run(ctx, out, os.Stderr, "uninstall", n.ReleaseName, "--namespace", n.SystemNS); err != nil {
+		return fmt.Errorf("helm uninstall %s: %w", n.ReleaseName, err)
+	}
+
+	// Delete both namespaces -- helm uninstall does not always remove the
+	// release namespace in all Helm versions.
+	for _, ns := range []string{n.SystemNS, n.DataplaneNS} {
+		kubeClient.Output(ctx, "delete", "namespace", ns, "--ignore-not-found", "--wait=false") //nolint:errcheck
+	}
+
+	fmt.Fprintln(out, "Done.")
+	return nil
+}
+
+// Get returns the status of a single installed pair.
+func Get(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix string) (*Status, error) {
+	if prefix == "" {
+		prefix = "tr"
+	}
+	n := names.For(prefix, index)
+
+	releases, err := helmClient.List(ctx, "^"+n.ReleaseName+"$")
+	if err != nil {
+		return nil, fmt.Errorf("helm list: %w", err)
+	}
+
+	s := &Status{Index: index, Names: n}
+	if len(releases) == 0 {
+		s.HelmStatus = "not-installed"
+		return s, nil
+	}
+	s.HelmStatus = releases[0].Status
+
+	// Controller availability
+	ready, err := kubeClient.Output(ctx,
+		"get", "deployment", "envoy-gateway", "-n", n.SystemNS,
+		"-o", "jsonpath={.status.availableReplicas}/{.status.replicas}",
+		"--ignore-not-found")
+	if err == nil && ready != "" {
+		s.Controller.Ready = ready
+		s.Controller.Available = strings.HasPrefix(ready, "1/")
+	}
+
+	// GatewayClass
+	gcConditions, err := kubeClient.Output(ctx,
+		"get", "gatewayclass", n.GatewayClass,
+		"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}",
+		"--ignore-not-found")
+	if err == nil {
+		s.GatewayClass.Accepted = strings.Contains(gcConditions, "Accepted=True")
+		if !s.GatewayClass.Accepted {
+			s.GatewayClass.Reason, _ = kubeClient.Output(ctx,
+				"get", "gatewayclass", n.GatewayClass,
+				"-o", `jsonpath={range .status.conditions[?(@.type=="Accepted")]}{.reason}{end}`,
+				"--ignore-not-found")
+		}
+	}
+
+	// Layer 3 Gateways in dataplane NS
+	gwNames, err := kubeClient.Output(ctx,
+		"get", "gateways", "-n", n.DataplaneNS,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\" \"}{end}",
+		"--ignore-not-found")
+	if err == nil {
+		for _, gwName := range strings.Fields(gwNames) {
+			gs := gatewayStatus(ctx, kubeClient, gwName, n.DataplaneNS)
+			s.L3Gateways = append(s.L3Gateways, gs)
+		}
+	}
+
+	return s, nil
+}
+
+// List returns the status of all installed pairs, discovered via helm list.
+func List(ctx context.Context, helmClient Helmer, kubeClient Kubectl, prefix string) ([]*Status, error) {
+	if prefix == "" {
+		prefix = "tr"
+	}
+	releases, err := helmClient.List(ctx, `^eg-pair-\d+$`)
+	if err != nil {
+		return nil, fmt.Errorf("helm list: %w", err)
+	}
+
+	var statuses []*Status
+	for _, rel := range releases {
+		index := 0
+		fmt.Sscanf(rel.Name, "eg-pair-%d", &index)
+		if index == 0 {
+			continue
+		}
+		s, err := Get(ctx, helmClient, kubeClient, index, prefix)
+		if err != nil {
+			return nil, err
+		}
+		statuses = append(statuses, s)
+	}
+	return statuses, nil
+}
+
+// Info returns the coupling fields an operator needs when writing Layer 3 manifests.
+func Info(prefix string, index int) names.Pair {
+	if prefix == "" {
+		prefix = "tr"
+	}
+	return names.For(prefix, index)
+}
+
+// ── internal helpers ─────────────────────────────────────────────────────────
+
+func waitController(ctx context.Context, k Kubectl, systemNS string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := k.Output(ctx,
+			"get", "deployment", "envoy-gateway", "-n", systemNS,
+			"-o", "jsonpath={.status.availableReplicas}",
+			"--ignore-not-found")
+		if err == nil && strings.TrimSpace(out) == "1" {
+			return nil
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return fmt.Errorf("controller not Available in %s after %s", systemNS, timeout)
+}
+
+func waitGatewayClass(ctx context.Context, k Kubectl, gcName string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := k.Output(ctx,
+			"get", "gatewayclass", gcName,
+			"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}",
+			"--ignore-not-found")
+		if err == nil && strings.Contains(out, "Accepted=True") {
+			return nil
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return fmt.Errorf("GatewayClass %s not Accepted after %s", gcName, timeout)
+}
+
+func gatewayStatus(ctx context.Context, k Kubectl, gwName, ns string) GatewayStatus {
+	gs := GatewayStatus{Name: gwName}
+
+	conditions, err := k.Output(ctx,
+		"get", "gateway", gwName, "-n", ns,
+		"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}",
+		"--ignore-not-found")
+	if err == nil {
+		gs.Programmed = strings.Contains(conditions, "Programmed=True")
+	}
+
+	gs.EnvoyProxyName, _ = k.Output(ctx,
+		"get", "gateway", gwName, "-n", ns,
+		"-o", "jsonpath={.spec.infrastructure.parametersRef.name}",
+		"--ignore-not-found")
+
+	// Find the proxy Deployment owned by this gateway.
+	proxyReady, err := k.Output(ctx,
+		"get", "deployments", "-n", ns,
+		"-l", "gateway.envoyproxy.io/owning-gateway-name="+gwName,
+		"-o", "jsonpath={.items[0].status.availableReplicas}/{.items[0].status.replicas}",
+		"--ignore-not-found")
+	if err == nil && strings.TrimSpace(proxyReady) != "/" && proxyReady != "" {
+		gs.ProxyReady = proxyReady
+	} else {
+		gs.ProxyReady = "-"
+	}
+
+	return gs
+}
+
+func helmTimeout(d time.Duration) string {
+	return fmt.Sprintf("%dm", int(d.Minutes()))
+}
+
+func extractChart() (string, func(), error) {
+	dir, err := os.MkdirTemp("", "gwp-chart-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+
+	root := "eg-pair"
+	if err := fs.WalkDir(charts.FS(), root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		dst := filepath.Join(dir, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0755)
+		}
+		data, err := fs.ReadFile(charts.FS(), path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, 0644)
+	}); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("extract eg-pair chart: %w", err)
+	}
+	return dir, cleanup, nil
+}
