@@ -58,7 +58,7 @@ func Execute(info BuildInfo) error {
 	root.AddCommand(
 		newVersionCmd(info),
 		newCRDsCmd(),
-		newPairCmd(),
+		newPairCmd(info),
 	)
 
 	return root.Execute()
@@ -169,7 +169,7 @@ func newCRDsInstallCmd() *cobra.Command {
 
 // ── pair ──────────────────────────────────────────────────────────────────────
 
-func newPairCmd() *cobra.Command {
+func newPairCmd(info BuildInfo) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pair",
 		Short: "Manage eg-pair Helm releases",
@@ -177,7 +177,7 @@ func newPairCmd() *cobra.Command {
 	cmd.AddCommand(
 		newPairInstallCmd(),
 		newPairDeleteCmd(),
-		newPairStatusCmd(),
+		newPairStatusCmd(info),
 		newPairListCmd(),
 		newPairInfoCmd(),
 	)
@@ -235,7 +235,7 @@ func newPairDeleteCmd() *cobra.Command {
 	}
 }
 
-func newPairStatusCmd() *cobra.Command {
+func newPairStatusCmd(info BuildInfo) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status [index]",
 		Short: "Show health of one pair or all pairs",
@@ -253,6 +253,10 @@ func newPairStatusCmd() *cobra.Command {
 				s, err := c.PairGet(ctx, index)
 				if err != nil {
 					return err
+				}
+				s.BundledEGVer = info.EGVersion
+				if s.InstalledEGVer != "" && s.InstalledEGVer != info.EGVersion {
+					s.VersionDrift = true
 				}
 				return emit(out, s, func(w io.Writer) { printPairStatus(w, s) })
 			}
@@ -378,6 +382,13 @@ func printPairStatus(w io.Writer, s *pair.Status) {
 	fmt.Fprintf(w, "  System namespace:    %s\n", s.Names.SystemNS)
 	fmt.Fprintf(w, "  Dataplane namespace: %s\n", s.Names.DataplaneNS)
 	fmt.Fprintf(w, "  Helm status:         %s\n", s.HelmStatus)
+	if s.InstalledEGVer != "" {
+		drift := ""
+		if s.VersionDrift {
+			drift = fmt.Sprintf("  [DRIFT: gwp bundles %s]", s.BundledEGVer)
+		}
+		fmt.Fprintf(w, "  EG version:          %s%s\n", s.InstalledEGVer, drift)
+	}
 	fmt.Fprintf(w, "  Controller:          %s/envoy-gateway", s.Names.SystemNS)
 	if s.Controller.Available {
 		fmt.Fprintf(w, "  Available (%s)\n", s.Controller.Ready)

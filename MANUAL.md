@@ -180,6 +180,33 @@ gwp pair install 3
 Pairs are fully isolated. Each has its own controller, GatewayClass, and two
 namespaces. Deleting or upgrading one pair has no effect on others.
 
+### 7. Upgrade a pair to a new EG version
+
+`gwp pair install` uses `helm upgrade --install`, so re-running it upgrades an
+existing pair in place. A new `gwp` binary ships with the updated chart and CRDs
+embedded. The upgrade path is:
+
+```bash
+# 1. Install the new gwp binary (e.g. brew upgrade gwp or replace the binary).
+
+# 2. Check what version is installed vs what gwp bundles.
+gwp pair status 1
+#   EG version: v1.8.0  [DRIFT: gwp bundles v1.9.0]
+
+# 3. Upgrade CRDs first (required when EG version changes; safe to re-run).
+gwp crds install --force
+
+# 4. Upgrade each pair (rolling restart of the controller pod).
+gwp pair install 1
+gwp pair install 2
+```
+
+The controller pod rolls automatically when the chart changes. Proxy pods roll
+only if the EG image tag changed in the chart.
+
+If `gwp pair status` shows no `[DRIFT]`, the cluster is already on the right
+version and no action is needed.
+
 ### 8. Uninstall a pair
 
 `gwp pair delete` handles the full teardown sequence:

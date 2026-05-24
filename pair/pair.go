@@ -29,12 +29,15 @@ type Helmer interface {
 
 // Status summarises the health of one installed pair.
 type Status struct {
-	Index        int                `json:"index"`
-	Names        names.Pair         `json:"names"`
-	HelmStatus   string             `json:"helmStatus"`
-	Controller   ControllerStatus   `json:"controller"`
-	GatewayClass GatewayClassStatus `json:"gatewayClass"`
-	L3Gateways   []GatewayStatus    `json:"l3Gateways"`
+	Index          int                `json:"index"`
+	Names          names.Pair         `json:"names"`
+	HelmStatus     string             `json:"helmStatus"`
+	InstalledEGVer string             `json:"installedEgVersion,omitempty"` // from helm release appVersion
+	BundledEGVer   string             `json:"bundledEgVersion,omitempty"`   // from binary build info
+	VersionDrift   bool               `json:"versionDrift,omitempty"`       // true when InstalledEGVer != BundledEGVer
+	Controller     ControllerStatus   `json:"controller"`
+	GatewayClass   GatewayClassStatus `json:"gatewayClass"`
+	L3Gateways     []GatewayStatus    `json:"l3Gateways"`
 }
 
 // ControllerStatus describes the EG controller Deployment.
@@ -232,6 +235,7 @@ func Get(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, 
 		return s, nil
 	}
 	s.HelmStatus = releases[0].Status
+	s.InstalledEGVer = releases[0].AppVersion
 
 	// Controller availability
 	ready, err := kubeClient.Output(ctx,
