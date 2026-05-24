@@ -29,32 +29,32 @@ type Helmer interface {
 
 // Status summarises the health of one installed pair.
 type Status struct {
-	Index        int
-	Names        names.Pair
-	HelmStatus   string // deployed | failed | pending-install | ...
-	Controller   ControllerStatus
-	GatewayClass GatewayClassStatus
-	L3Gateways   []GatewayStatus
+	Index        int                `json:"index"`
+	Names        names.Pair         `json:"names"`
+	HelmStatus   string             `json:"helmStatus"`
+	Controller   ControllerStatus   `json:"controller"`
+	GatewayClass GatewayClassStatus `json:"gatewayClass"`
+	L3Gateways   []GatewayStatus    `json:"l3Gateways"`
 }
 
 // ControllerStatus describes the EG controller Deployment.
 type ControllerStatus struct {
-	Available bool
-	Ready     string // "1/1", "0/1", etc.
+	Available bool   `json:"available"`
+	Ready     string `json:"ready"`
 }
 
 // GatewayClassStatus describes the cluster-scoped GatewayClass for this pair.
 type GatewayClassStatus struct {
-	Accepted bool
-	Reason   string
+	Accepted bool   `json:"accepted"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // GatewayStatus describes one operator-applied Gateway in the dataplane namespace.
 type GatewayStatus struct {
-	Name           string
-	Programmed     bool
-	EnvoyProxyName string // from infrastructure.parametersRef
-	ProxyReady     string // "1/1", "-"
+	Name           string `json:"name"`
+	Programmed     bool   `json:"programmed"`
+	EnvoyProxyName string `json:"envoyProxyName,omitempty"`
+	ProxyReady     string `json:"proxyReady"`
 }
 
 // InstallOptions controls pair installation.

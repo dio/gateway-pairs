@@ -20,49 +20,36 @@ type Kubectl interface {
 }
 
 // State describes the installation state of a CRD bundle.
-type State int
+type State string
 
 const (
 	// NotInstalled means the CRD was not found on the cluster.
-	NotInstalled State = iota
+	NotInstalled State = "not-installed"
 	// SelfManaged means the CRD exists and was installed by a non-provider tool.
-	SelfManaged
+	SelfManaged State = "installed"
 	// ProviderManaged means the CRD is owned by a cloud provider controller.
 	// gwp will not overwrite provider-managed CRDs by default.
-	ProviderManaged
+	ProviderManaged State = "provider-managed"
 )
-
-func (s State) String() string {
-	switch s {
-	case NotInstalled:
-		return "not-installed"
-	case SelfManaged:
-		return "self-managed"
-	case ProviderManaged:
-		return "provider-managed"
-	default:
-		return "unknown"
-	}
-}
 
 // GatewayAPIInfo describes the Gateway API CRDs found on a cluster.
 type GatewayAPIInfo struct {
-	State           State
-	BundleVersion   string
-	Channel         string
-	ProviderManager string // non-empty when ProviderManaged
+	State           State  `json:"state"`
+	BundleVersion   string `json:"bundleVersion,omitempty"`
+	Channel         string `json:"channel,omitempty"`
+	ProviderManager string `json:"providerManager,omitempty"`
 }
 
 // EGInfo describes the Envoy Gateway CRDs found on a cluster.
 type EGInfo struct {
-	State   State
-	Version string
+	State   State  `json:"state"`
+	Version string `json:"version,omitempty"`
 }
 
 // DetectResult is the combined output of a CRD detection pass.
 type DetectResult struct {
-	GatewayAPI GatewayAPIInfo
-	EG         EGInfo
+	GatewayAPI GatewayAPIInfo `json:"gatewayAPI"`
+	EG         EGInfo         `json:"envoyGateway"`
 }
 
 var knownProviderManagers = []string{

@@ -7,25 +7,25 @@ import "fmt"
 // Pair holds all derived names for a single eg-pair installation.
 type Pair struct {
 	// Prefix is the base prefix (e.g. "tr").
-	Prefix string
+	Prefix string `json:"prefix"`
 	// Index is the pair number (e.g. 1).
-	Index int
+	Index int `json:"index"`
 
 	// SystemNS is the Helm release namespace and controller namespace.
 	// e.g. "tr-system-1"
-	SystemNS string
+	SystemNS string `json:"systemNamespace"`
 	// DataplaneNS is the namespace for Gateways, proxies, and HTTPRoutes.
 	// e.g. "tr-dataplane-1"
-	DataplaneNS string
+	DataplaneNS string `json:"dataplaneNamespace"`
 	// GatewayClass is the cluster-scoped GatewayClass name.
 	// e.g. "tr-1"
-	GatewayClass string
+	GatewayClass string `json:"gatewayClass"`
 	// ControllerName is the unique EG controller identifier.
 	// e.g. "gateway.envoyproxy.io/tr-1"
-	ControllerName string
+	ControllerName string `json:"controllerName"`
 	// ReleaseName is the Helm release name.
 	// e.g. "eg-pair-1"
-	ReleaseName string
+	ReleaseName string `json:"releaseName"`
 }
 
 // For returns all derived names for a pair given prefix and index.

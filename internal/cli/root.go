@@ -3,7 +3,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -13,8 +15,8 @@ import (
 	// Import charts to ensure embedded assets are linked into the binary.
 	_ "github.com/dio/gateway-pairs/charts"
 
-	"github.com/dio/gateway-pairs/gwpapi"
 	"github.com/dio/gateway-pairs/crd"
+	"github.com/dio/gateway-pairs/gwpapi"
 	"github.com/dio/gateway-pairs/internal/kube"
 	"github.com/dio/gateway-pairs/pair"
 )
@@ -32,6 +34,7 @@ var (
 	globalContext    string
 	globalKubeconfig string
 	globalPrefix     string
+	globalOutput     string // "text" or "json"
 )
 
 // Execute builds and runs the root command.
@@ -49,6 +52,8 @@ func Execute(info BuildInfo) error {
 		"path to kubeconfig file (default: ~/.kube/config)")
 	root.PersistentFlags().StringVar(&globalPrefix, "prefix", "tr",
 		`name prefix for all derived resource names (e.g. "tr" → tr-system-1, tr-1)`)
+	root.PersistentFlags().StringVarP(&globalOutput, "output", "o", "text",
+		"output format: text or json")
 
 	root.AddCommand(
 		newVersionCmd(info),
@@ -67,6 +72,18 @@ func apiClient() *gwpapi.Client {
 	})
 }
 
+// emit writes v as JSON to w if --output=json, otherwise calls textFn.
+// textFn receives w so it can write directly.
+func emit(w io.Writer, v any, textFn func(io.Writer)) error {
+	if globalOutput == "json" {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(v)
+	}
+	textFn(w)
+	return nil
+}
+
 // ── version ───────────────────────────────────────────────────────────────────
 
 func newVersionCmd(info BuildInfo) *cobra.Command {
@@ -74,11 +91,19 @@ func newVersionCmd(info BuildInfo) *cobra.Command {
 		Use:   "version",
 		Short: "Print gwp version and bundled component versions",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Fprintf(cmd.OutOrStdout(), "gwp %s\n", info.Version)
-			fmt.Fprintf(cmd.OutOrStdout(), "  eg-version: %s\n", info.EGVersion)
-			fmt.Fprintf(cmd.OutOrStdout(), "  commit:     %s\n", info.Commit)
-			fmt.Fprintf(cmd.OutOrStdout(), "  built:      %s\n", info.Date)
-			return nil
+			type versionOutput struct {
+				Version   string `json:"version"`
+				EGVersion string `json:"egVersion"`
+				Commit    string `json:"commit"`
+				Date      string `json:"date"`
+			}
+			v := versionOutput{info.Version, info.EGVersion, info.Commit, info.Date}
+			return emit(cmd.OutOrStdout(), v, func(w io.Writer) {
+				fmt.Fprintf(w, "gwp %s\n", v.Version)
+				fmt.Fprintf(w, "  eg-version: %s\n", v.EGVersion)
+				fmt.Fprintf(w, "  commit:     %s\n", v.Commit)
+				fmt.Fprintf(w, "  built:      %s\n", v.Date)
+			})
 		},
 	}
 }
@@ -105,32 +130,9 @@ func newCRDsDetectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Gateway API CRDs:\n")
-			gapi := result.GatewayAPI
-			switch gapi.State {
-			case crd.NotInstalled:
-				fmt.Fprintf(out, "  state: not installed\n")
-			case crd.ProviderManaged:
-				fmt.Fprintf(out, "  state:   provider-managed (%s)\n", gapi.ProviderManager)
-				fmt.Fprintf(out, "  version: %s (%s)\n", gapi.BundleVersion, gapi.Channel)
-				fmt.Fprintf(out, "  note:    gwp will not overwrite -- use --skip-gateway-api-crds\n")
-			case crd.SelfManaged:
-				fmt.Fprintf(out, "  state:   installed\n")
-				fmt.Fprintf(out, "  version: %s (%s)\n", gapi.BundleVersion, gapi.Channel)
-			}
-
-			fmt.Fprintf(out, "\nEnvoy Gateway CRDs:\n")
-			eg := result.EG
-			switch eg.State {
-			case crd.NotInstalled:
-				fmt.Fprintf(out, "  state: not installed\n")
-			default:
-				fmt.Fprintf(out, "  state:   installed\n")
-				fmt.Fprintf(out, "  version: %s\n", eg.Version)
-			}
-			return nil
+			return emit(cmd.OutOrStdout(), result, func(w io.Writer) {
+				printCRDDetect(w, result)
+			})
 		},
 	}
 }
@@ -252,8 +254,7 @@ func newPairStatusCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				printPairStatus(out, s, true)
-				return nil
+				return emit(out, s, func(w io.Writer) { printPairStatus(w, s) })
 			}
 
 			statuses, err := c.PairList(ctx)
@@ -261,15 +262,20 @@ func newPairStatusCmd() *cobra.Command {
 				return err
 			}
 			if len(statuses) == 0 {
+				if globalOutput == "json" {
+					fmt.Fprintln(out, "[]")
+					return nil
+				}
 				fmt.Fprintln(out, "No pairs installed.")
 				return nil
 			}
-			fmt.Fprintf(out, "%-6s %-20s %-22s %-12s %-10s %-10s %s\n",
-				"PAIR", "SYSTEM-NS", "DATAPLANE-NS", "GW-CLASS", "CONTROLLER", "GW-CLASS", "L3-GATEWAYS")
-			for _, s := range statuses {
-				printPairRow(out, s)
-			}
-			return nil
+			return emit(out, statuses, func(w io.Writer) {
+				fmt.Fprintf(w, "%-6s %-20s %-22s %-12s %-10s %-10s %s\n",
+					"PAIR", "SYSTEM-NS", "DATAPLANE-NS", "GW-CLASS", "CONTROLLER", "GW-CLASS", "L3-GATEWAYS")
+				for _, s := range statuses {
+					printPairRow(w, s)
+				}
+			})
 		},
 	}
 }
@@ -286,15 +292,20 @@ func newPairListCmd() *cobra.Command {
 				return err
 			}
 			if len(statuses) == 0 {
+				if globalOutput == "json" {
+					fmt.Fprintln(cmd.OutOrStdout(), "[]")
+					return nil
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "No pairs installed.")
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%-6s %-20s %-12s %-10s\n", "PAIR", "SYSTEM-NS", "GW-CLASS", "STATUS")
-			for _, s := range statuses {
-				fmt.Fprintf(cmd.OutOrStdout(), "%-6d %-20s %-12s %-10s\n",
-					s.Index, s.Names.SystemNS, s.Names.GatewayClass, s.HelmStatus)
-			}
-			return nil
+			return emit(cmd.OutOrStdout(), statuses, func(w io.Writer) {
+				fmt.Fprintf(w, "%-6s %-20s %-12s %-10s\n", "PAIR", "SYSTEM-NS", "GW-CLASS", "STATUS")
+				for _, s := range statuses {
+					fmt.Fprintf(w, "%-6d %-20s %-12s %-10s\n",
+						s.Index, s.Names.SystemNS, s.Names.GatewayClass, s.HelmStatus)
+				}
+			})
 		},
 	}
 }
@@ -310,67 +321,91 @@ func newPairInfoCmd() *cobra.Command {
 				return err
 			}
 			n := pair.Info(globalPrefix, index)
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Pair %d:\n", index)
-			fmt.Fprintf(out, "  gatewayClassName:    %s\n", n.GatewayClass)
-			fmt.Fprintf(out, "  dataplaneNamespace:  %s\n", n.DataplaneNS)
-			fmt.Fprintf(out, "  allowedRoutes label: tr/gateway-routes=true\n\n")
-			fmt.Fprintf(out, "Use in your Gateway manifests:\n\n")
-			fmt.Fprintf(out, "  spec:\n")
-			fmt.Fprintf(out, "    gatewayClassName: %s\n", n.GatewayClass)
-			fmt.Fprintf(out, "    infrastructure:\n")
-			fmt.Fprintf(out, "      parametersRef:\n")
-			fmt.Fprintf(out, "        group: gateway.envoyproxy.io\n")
-			fmt.Fprintf(out, "        kind: EnvoyProxy\n")
-			fmt.Fprintf(out, "        name: <your-tier-name>  # must exist in %s\n\n", n.DataplaneNS)
-			fmt.Fprintf(out, "  listeners:\n")
-			fmt.Fprintf(out, "  - allowedRoutes:\n")
-			fmt.Fprintf(out, "      namespaces:\n")
-			fmt.Fprintf(out, "        from: Selector\n")
-			fmt.Fprintf(out, "        selector:\n")
-			fmt.Fprintf(out, "          matchLabels:\n")
-			fmt.Fprintf(out, "            tr/gateway-routes: \"true\"\n")
-			return nil
+			return emit(cmd.OutOrStdout(), n, func(w io.Writer) {
+				fmt.Fprintf(w, "Pair %d:\n", index)
+				fmt.Fprintf(w, "  gatewayClassName:    %s\n", n.GatewayClass)
+				fmt.Fprintf(w, "  dataplaneNamespace:  %s\n", n.DataplaneNS)
+				fmt.Fprintf(w, "  allowedRoutes label: tr/gateway-routes=true\n\n")
+				fmt.Fprintf(w, "Use in your Gateway manifests:\n\n")
+				fmt.Fprintf(w, "  spec:\n")
+				fmt.Fprintf(w, "    gatewayClassName: %s\n", n.GatewayClass)
+				fmt.Fprintf(w, "    infrastructure:\n")
+				fmt.Fprintf(w, "      parametersRef:\n")
+				fmt.Fprintf(w, "        group: gateway.envoyproxy.io\n")
+				fmt.Fprintf(w, "        kind: EnvoyProxy\n")
+				fmt.Fprintf(w, "        name: <your-tier-name>  # must exist in %s\n\n", n.DataplaneNS)
+				fmt.Fprintf(w, "  listeners:\n")
+				fmt.Fprintf(w, "  - allowedRoutes:\n")
+				fmt.Fprintf(w, "      namespaces:\n")
+				fmt.Fprintf(w, "        from: Selector\n")
+				fmt.Fprintf(w, "        selector:\n")
+				fmt.Fprintf(w, "          matchLabels:\n")
+				fmt.Fprintf(w, "            tr/gateway-routes: \"true\"\n")
+			})
 		},
 	}
 }
 
-// ── output helpers ────────────────────────────────────────────────────────────
+// ── text renderers ────────────────────────────────────────────────────────────
 
-func printPairStatus(out interface{ Write([]byte) (int, error) }, s *pair.Status, verbose bool) {
-	fmt.Fprintf(os.Stdout, "Pair %d (%s):\n", s.Index, s.Names.GatewayClass)
-	fmt.Fprintf(os.Stdout, "  System namespace:    %s\n", s.Names.SystemNS)
-	fmt.Fprintf(os.Stdout, "  Dataplane namespace: %s\n", s.Names.DataplaneNS)
-	fmt.Fprintf(os.Stdout, "  Helm status:         %s\n", s.HelmStatus)
-	fmt.Fprintf(os.Stdout, "  Controller:          %s", s.Names.SystemNS+"/envoy-gateway")
+func printCRDDetect(w io.Writer, result crd.DetectResult) {
+	gapi := result.GatewayAPI
+	fmt.Fprintf(w, "Gateway API CRDs:\n")
+	switch gapi.State {
+	case crd.NotInstalled:
+		fmt.Fprintf(w, "  state: not installed\n")
+	case crd.ProviderManaged:
+		fmt.Fprintf(w, "  state:   provider-managed (%s)\n", gapi.ProviderManager)
+		fmt.Fprintf(w, "  version: %s (%s)\n", gapi.BundleVersion, gapi.Channel)
+		fmt.Fprintf(w, "  note:    gwp will not overwrite -- use --skip-gateway-api-crds\n")
+	case crd.SelfManaged:
+		fmt.Fprintf(w, "  state:   installed\n")
+		fmt.Fprintf(w, "  version: %s (%s)\n", gapi.BundleVersion, gapi.Channel)
+	}
+	eg := result.EG
+	fmt.Fprintf(w, "\nEnvoy Gateway CRDs:\n")
+	switch eg.State {
+	case crd.NotInstalled:
+		fmt.Fprintf(w, "  state: not installed\n")
+	default:
+		fmt.Fprintf(w, "  state:   installed\n")
+		fmt.Fprintf(w, "  version: %s\n", eg.Version)
+	}
+}
+
+func printPairStatus(w io.Writer, s *pair.Status) {
+	fmt.Fprintf(w, "Pair %d (%s):\n", s.Index, s.Names.GatewayClass)
+	fmt.Fprintf(w, "  System namespace:    %s\n", s.Names.SystemNS)
+	fmt.Fprintf(w, "  Dataplane namespace: %s\n", s.Names.DataplaneNS)
+	fmt.Fprintf(w, "  Helm status:         %s\n", s.HelmStatus)
+	fmt.Fprintf(w, "  Controller:          %s/envoy-gateway", s.Names.SystemNS)
 	if s.Controller.Available {
-		fmt.Fprintf(os.Stdout, "  Available (%s)\n", s.Controller.Ready)
+		fmt.Fprintf(w, "  Available (%s)\n", s.Controller.Ready)
 	} else {
-		fmt.Fprintf(os.Stdout, "  NOT AVAILABLE (%s)\n", s.Controller.Ready)
+		fmt.Fprintf(w, "  NOT AVAILABLE (%s)\n", s.Controller.Ready)
 	}
-	fmt.Fprintf(os.Stdout, "  GatewayClass:        %s", s.Names.GatewayClass)
+	fmt.Fprintf(w, "  GatewayClass:        %s", s.Names.GatewayClass)
 	if s.GatewayClass.Accepted {
-		fmt.Fprintf(os.Stdout, "  Accepted=True\n")
+		fmt.Fprintf(w, "  Accepted=True\n")
 	} else {
-		fmt.Fprintf(os.Stdout, "  Accepted=False (%s)\n", s.GatewayClass.Reason)
+		fmt.Fprintf(w, "  Accepted=False (%s)\n", s.GatewayClass.Reason)
 	}
-
 	if len(s.L3Gateways) == 0 {
-		fmt.Fprintf(os.Stdout, "\nLayer 3: no Gateways in %s\n", s.Names.DataplaneNS)
+		fmt.Fprintf(w, "\nLayer 3: no Gateways in %s\n", s.Names.DataplaneNS)
 		return
 	}
-	fmt.Fprintf(os.Stdout, "\nLayer 3 (in %s):\n", s.Names.DataplaneNS)
+	fmt.Fprintf(w, "\nLayer 3 (in %s):\n", s.Names.DataplaneNS)
 	for _, gw := range s.L3Gateways {
 		programmedStr := "Programmed=False"
 		if gw.Programmed {
 			programmedStr = "Programmed=True"
 		}
-		fmt.Fprintf(os.Stdout, "  Gateway %-20s  %-18s  parametersRef: %-12s  proxy: %s\n",
+		fmt.Fprintf(w, "  Gateway %-20s  %-18s  parametersRef: %-12s  proxy: %s\n",
 			gw.Name, programmedStr, gw.EnvoyProxyName, gw.ProxyReady)
 	}
 }
 
-func printPairRow(out interface{ Write([]byte) (int, error) }, s *pair.Status) {
+func printPairRow(w io.Writer, s *pair.Status) {
 	controllerStr := "NotReady"
 	if s.Controller.Available {
 		controllerStr = "Available"
@@ -379,7 +414,7 @@ func printPairRow(out interface{ Write([]byte) (int, error) }, s *pair.Status) {
 	if s.GatewayClass.Accepted {
 		gcStr = "Accepted"
 	}
-	fmt.Fprintf(os.Stdout, "%-6d %-20s %-22s %-12s %-10s %-10s %d\n",
+	fmt.Fprintf(w, "%-6d %-20s %-22s %-12s %-10s %-10s %d\n",
 		s.Index, s.Names.SystemNS, s.Names.DataplaneNS, s.Names.GatewayClass,
 		controllerStr, gcStr, len(s.L3Gateways))
 }
@@ -391,3 +426,6 @@ func parseIndex(s string) (int, error) {
 	}
 	return i, nil
 }
+
+// ensure os is used (printPairStatus previously used os.Stdout directly -- now uses w parameter)
+var _ = os.Stdout
