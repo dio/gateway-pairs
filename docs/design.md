@@ -31,7 +31,7 @@ land there too.
 
 The `GatewayClass` has no default `parametersRef`. Every Gateway brings
 its own EnvoyProxy explicitly. This is the most flexible model and is what
-`tiered-router-eg` uses.
+[`tiered-router-eg`](https://github.com/dio/transit/tree/main/integrations/tiered-router-eg) uses.
 
 > **Simpler single-tier deployments:** if you only need one uniform proxy,
 > put a single `EnvoyProxy` in `tr-system-{i}` and wire it to
@@ -42,7 +42,7 @@ its own EnvoyProxy explicitly. This is the most flexible model and is what
 
 ---
 
-## Case study: `tiered-router-eg`
+## Case study: [`tiered-router-eg`](https://github.com/dio/transit/tree/main/integrations/tiered-router-eg)
 
 Reference: `https://github.com/dio/transit/tree/main/integrations/tiered-router-eg/k8s/`
 
@@ -179,9 +179,115 @@ convenience wrapper; operators can always apply raw manifests.
 
 ---
 
-## Resources by scope
+## Layering: cluster, pair, tenant
 
-| Resource | Namespace | Created by |
+Everything in `gateway-pairs` falls into one of three layers. Understanding
+which layer a resource belongs to determines who installs it, who owns it,
+and what breaks if you get it wrong.
+
+### Layer 1: cluster-wide (installed once)
+
+**Gateway API CRDs** and **EG CRDs** are cluster-scoped and version-sensitive.
+They must be installed before any pair. One installation serves all pairs.
+
+```
+GatewayClass              (cluster-scoped, but per-pair -- see Layer 2)
+CustomResourceDefinitions (cluster-scoped, shared -- this is the one-time install)
+```
+
+`gwp crds install` handles this. It detects whether the cluster already has
+Gateway API CRDs (user-installed or provider-managed), installs only what is
+missing, and validates that the installed version is compatible with the EG
+version being deployed.
+
+Provider-managed Gateway API (GKE, AKS autopilot) means `gwp crds install`
+skips Gateway API CRDs but still installs EG CRDs. See the CRD conflict
+strategy section below.
+
+### Layer 2: per pair (one `eg-pair` Helm release)
+
+Each `helm upgrade --install eg-pair-{i}` installs exactly one pair. Within
+this layer there are two sub-scopes:
+
+**Cluster-scoped, but unique per pair:**
+
+| Resource | Why unique |
+|---|---|
+| `GatewayClass tr-{i}` | GatewayClass names are cluster-scoped; two pairs cannot share one without their controllers fighting |
+| `ClusterRole eg-pair-tr-{i}-tokenreviews` | Bound to this pair's controller SA |
+| `ClusterRole eg-pair-tr-{i}-gateway-controller` | Same |
+| `ClusterRoleBinding` (both) | Binds to this pair's `envoy-gateway` SA in `tr-system-{i}` |
+
+N pairs in one cluster means N GatewayClasses and N sets of ClusterRoles.
+The naming scheme (`eg-pair-tr-{i}-*`) prevents collisions.
+
+**Namespace-scoped (pair's two namespaces):**
+
+Everything else in the pair is namespace-scoped and naturally isolated because
+`tr-system-{i}` and `tr-dataplane-{i}` are unique to this pair.
+
+### Layer 3: per tenant/integration (operator-applied)
+
+This is where `tiered-router-eg` lives. After `eg-pair-{i}` is installed,
+the operator applies the integration's resources into `tr-dataplane-{i}`:
+
+```bash
+kubectl apply -n tr-dataplane-1 -f envoyproxies-l1-l2.yaml
+kubectl apply -n tr-dataplane-1 -f gateways-l1-l2.yaml
+kubectl apply -n tr-dataplane-1 -f httproutes.yaml
+```
+
+The only coupling between Layer 3 and Layer 2 is the `gatewayClassName` field
+in each Gateway manifest. It must reference the pair's GatewayClass:
+
+```yaml
+spec:
+  gatewayClassName: tr-1    # must match the GatewayClass created by eg-pair-1
+```
+
+Everything else in Layer 3 is self-contained. Multiple `tiered-router-eg`
+tenants in the same cluster each get their own pair (Layer 2 install) and
+their own `tr-dataplane-{i}` namespace into which they apply their topology.
+
+### The full picture for N tenants
+
+```
+Cluster
+  Layer 1 (once):
+    Gateway API CRDs (v1.5.1)
+    EG CRDs (v1.8.0)
+
+  Layer 2 (per tenant, via eg-pair):
+    GatewayClass tr-1          (cluster-scoped)
+    ClusterRole/Binding tr-1   (cluster-scoped)
+    tr-system-1/               (controller)
+    tr-dataplane-1/            (scaffold + RBAC, label: tr/gateway-routes=true)
+
+    GatewayClass tr-2
+    ClusterRole/Binding tr-2
+    tr-system-2/
+    tr-dataplane-2/
+
+  Layer 3 (per tenant, operator-applied):
+    tr-dataplane-1/
+      EnvoyProxy/l1, EnvoyProxy/l2-a, EnvoyProxy/l2-b
+      Gateway/l1 (gatewayClassName: tr-1)
+      Gateway/l2-a, Gateway/l2-b
+      HTTPRoutes
+
+    tr-dataplane-2/
+      EnvoyProxy/l1, EnvoyProxy/l2-a, ...
+      Gateway/l1 (gatewayClassName: tr-2)
+      ...
+```
+
+Tenant 1's controller (`tr-system-1`) only watches `tr-system-1` and
+`tr-dataplane-1`. It will never see tenant 2's resources, even though their
+Gateways reference the same EG version and run in the same cluster.
+
+---
+
+## Resources by scope
 |---|---|---|
 | Helm release Secret | tr-system-{i} | Helm |
 | Namespace tr-system-{i} | cluster | `--create-namespace` + chart resource |
