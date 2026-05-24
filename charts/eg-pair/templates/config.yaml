@@ -23,5 +23,6 @@ data:
           type: Namespaces
           namespaces:
           - {{ $sysNS }}
+          - {{ include "eg-pair.dataplaneNamespace" . }}
     extensionApis:
       enableEnvoyPatchPolicy: true

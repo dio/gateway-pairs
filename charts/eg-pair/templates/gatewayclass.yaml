@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     eg-pair: {{ .Values.pair.index | quote }}
 spec:
-  controllerName: gateway.envoyproxy.io/{{ include "eg-pair.gatewayClassName" . }}
+  controllerName: gateway.envoyproxy.io/{{ $gcName }}
   parametersRef:
     group: gateway.envoyproxy.io
     kind: EnvoyProxy

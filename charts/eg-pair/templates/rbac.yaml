@@ -1,4 +1,5 @@
 {{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
 {{- $prefix := include "eg-pair.prefix" . }}
 
 {{/* tokenreviews ClusterRole */}}
@@ -41,44 +42,38 @@ subjects:
 ---
 {{- end }}
 
-{{/* infra-manager Role in system namespace.
-     EG creates SA/Service/ConfigMap/Deployment here for both
-     controller and proxy (GatewayNamespace mode puts proxy in
-     the Gateway's namespace = tr-system-{i}). */}}
+{{/* infra-manager Role in BOTH system and dataplane namespaces.
+     System NS: EG creates the proxy ServiceAccount here.
+     Dataplane NS: EG creates proxy Deployment, Service here
+     (GatewayNamespace mode puts proxy in the Gateway's namespace = dpNS). */}}
 {{- if .Values.rbac.infraManager }}
+{{- $infraRules := list
+  (dict "apiGroups" (list "") "resources" (list "serviceaccounts" "services" "configmaps") "verbs" (list "create" "get" "list" "watch" "delete" "deletecollection" "patch" "update"))
+  (dict "apiGroups" (list "apps") "resources" (list "deployments" "daemonsets") "verbs" (list "create" "get" "list" "watch" "delete" "deletecollection" "patch" "update"))
+  (dict "apiGroups" (list "autoscaling") "resources" (list "horizontalpodautoscalers") "verbs" (list "create" "get" "list" "watch" "delete" "deletecollection" "patch" "update"))
+  (dict "apiGroups" (list "policy") "resources" (list "poddisruptionbudgets") "verbs" (list "create" "get" "list" "watch" "delete" "deletecollection" "patch" "update"))
+  (dict "apiGroups" (list "certificates.k8s.io") "resources" (list "clustertrustbundles") "verbs" (list "get" "list" "watch"))
+}}
+{{- range $ns := list $sysNS $dpNS }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: infra-manager
-  namespace: {{ $sysNS }}
+  namespace: {{ $ns }}
   labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    eg-pair: {{ .Values.pair.index | quote }}
+    app.kubernetes.io/managed-by: Helm
+    eg-pair: {{ $.Values.pair.index | quote }}
 rules:
-- apiGroups: [""]
-  resources: ["serviceaccounts", "services", "configmaps"]
-  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
-- apiGroups: ["apps"]
-  resources: ["deployments", "daemonsets"]
-  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
-- apiGroups: ["autoscaling"]
-  resources: ["horizontalpodautoscalers"]
-  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
-- apiGroups: ["policy"]
-  resources: ["poddisruptionbudgets"]
-  verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
-- apiGroups: ["certificates.k8s.io"]
-  resources: ["clustertrustbundles"]
-  verbs: ["get", "list", "watch"]
+{{- toYaml $infraRules | nindent 0 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: infra-manager
-  namespace: {{ $sysNS }}
+  namespace: {{ $ns }}
   labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    eg-pair: {{ .Values.pair.index | quote }}
+    app.kubernetes.io/managed-by: Helm
+    eg-pair: {{ $.Values.pair.index | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -87,4 +82,6 @@ subjects:
 - kind: ServiceAccount
   name: envoy-gateway
   namespace: {{ $sysNS }}
+---
+{{- end }}
 {{- end }}

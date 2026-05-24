@@ -1,6 +1,11 @@
 Pair {{ .Values.pair.index }} deployed.
 
-Namespace:    {{ include "eg-pair.systemNamespace" . }}
+System namespace (controller + proxy + Gateway):
+  {{ include "eg-pair.systemNamespace" . }}
+
+Dataplane namespace (tenant HTTPRoutes):
+  {{ include "eg-pair.dataplaneNamespace" . }}
+
 GatewayClass: {{ include "eg-pair.gatewayClassName" . }}
 
 Wait for the controller:
@@ -11,5 +16,8 @@ Check Gateway status:
   kubectl get gateway {{ .Values.gateway.name }} \
     -n {{ include "eg-pair.systemNamespace" . }}
 
-Tenants deploy HTTPRoutes in {{ include "eg-pair.systemNamespace" . }}
-(same namespace as the Gateway -- allowedRoutes: from: Same).
+Tenants deploy HTTPRoutes in {{ include "eg-pair.dataplaneNamespace" . }}
+referencing the Gateway with parentRefs.namespace:
+  parentRefs:
+  - name: {{ .Values.gateway.name }}
+    namespace: {{ include "eg-pair.systemNamespace" . }}

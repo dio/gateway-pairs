@@ -60,7 +60,7 @@ func (s *gatewayPairsSuite) Test05_VerifyIsolation() {
 		s.Equal("1", strings.TrimSpace(out),
 			"expected 1 available replica in %s", n.SystemNS)
 	}
-	// No separate dataplane namespace -- proxy and controller share SystemNS.
+	// Proxy lives in SystemNS (Gateway's namespace). Dataplane NS holds tenant routes.
 	// The per-pair controller Available check above is sufficient for isolation.
 }
 
@@ -110,16 +110,16 @@ func (s *gatewayPairsSuite) Test08_VerifyDataplaneProxies() {
 func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
 	n := namesFor(1)
 
-	// Echo server in systemNS -- same namespace as the Gateway and proxy.
-	// Tenants deploy HTTPRoutes here (allowedRoutes: from: Same).
-	s.applyManifest(n.SystemNS, echoDeploymentManifest(n.SystemNS))
-	s.applyManifest(n.SystemNS, echoServiceManifest(n.SystemNS))
-	s.mustKubectl("rollout", "status", "deployment/echo", "-n", n.SystemNS, "--timeout=90s")
+	// Echo backend in dataplaneNS -- tenants deploy here.
+	s.applyManifest(n.DataplaneNS, echoDeploymentManifest(n.DataplaneNS))
+	s.applyManifest(n.DataplaneNS, echoServiceManifest(n.DataplaneNS))
+	s.mustKubectl("rollout", "status", "deployment/echo", "-n", n.DataplaneNS, "--timeout=90s")
 
-	// HTTPRoute in systemNS referencing the Gateway in the same namespace.
-	s.applyManifest(n.SystemNS, httpRouteManifest(n.SystemNS))
+	// HTTPRoute in dataplaneNS referencing Gateway in systemNS.
+	// Gateway allows routes from dataplaneNS via allowedRoutes: from: Selector.
+	s.applyManifest(n.DataplaneNS, httpRouteManifest(n.SystemNS, n.DataplaneNS))
 
-	// Gateway Service lives in systemNS (proxy is there too).
+	// Gateway Service lives in systemNS (proxy is co-located with Gateway).
 	gwSvc, err := s.findGatewayService(n.SystemNS)
 	s.Require().NoError(err, "could not find Gateway Service in %s", n.SystemNS)
 
@@ -144,9 +144,7 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 	s.T().Logf("deleting eg-pair-2 from %s", n.SystemNS)
 
 	// Delete the Gateway first so EG deprovisions the proxy Deployment and
-	// removes its finalizer before we remove the controller. Without this the
-	// namespace gets stuck Terminating because the proxy finalizer can't be
-	// cleared by the (already-deleted) controller.
+	// removes its finalizer before we remove the controller.
 	s.kubectl("delete", "gateway", "eg", "-n", n.SystemNS, //nolint:errcheck
 		"--ignore-not-found", "--wait=true", "--timeout=60s")
 
@@ -160,9 +158,9 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 
 	s.mustHelm("uninstall", "eg-pair-2", "--namespace", n.SystemNS)
 
-	// Delete namespaces explicitly -- the system NS is a hook resource
-	// not tracked for helm uninstall deletion.
-	for _, ns := range []string{n.SystemNS, n.SystemNS} {
+	// Delete both namespaces -- system NS is the release NS (not explicitly
+	// tracked for deletion by Helm after uninstall in all versions).
+	for _, ns := range []string{n.SystemNS, n.DataplaneNS} {
 		s.kubectl("delete", "namespace", ns, "--ignore-not-found", "--wait=false") //nolint:errcheck
 	}
 
@@ -175,6 +173,11 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 		_, err := s.kubectl("get", "namespace", n.SystemNS)
 		return err != nil
 	}, 3*time.Minute, 3*time.Second, "Namespace %s not removed", n.SystemNS)
+
+	s.eventually(func() bool {
+		_, err := s.kubectl("get", "namespace", n.DataplaneNS)
+		return err != nil
+	}, 3*time.Minute, 3*time.Second, "Namespace %s not removed", n.DataplaneNS)
 
 	prefix := fmt.Sprintf("eg-pair-%d", 2)
 	for _, res := range []string{
@@ -389,7 +392,7 @@ spec:
 `, ns)
 }
 
-func httpRouteManifest(ns string) string {
+func httpRouteManifest(gatewayNS, routeNS string) string {
 	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -398,6 +401,7 @@ metadata:
 spec:
   parentRefs:
   - name: eg
+    namespace: %s
   rules:
   - matches:
     - path:
@@ -406,5 +410,5 @@ spec:
     backendRefs:
     - name: echo
       port: 80
-`, ns)
+`, routeNS, gatewayNS)
 }
