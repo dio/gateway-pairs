@@ -109,37 +109,6 @@ pair-install:
 pair-delete:
 	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n $(RELEASE_NS) || true
 
-## e2e-remote-dirty: rsync working tree to mini and run e2e there.
-## No git commit required -- fast iteration loop for local dev on mini.
-## Use this when iterating; use e2e-remote when you want to share green state.
-e2e-remote-dirty:
-	rsync -az --delete \
-	  --exclude='.git/' \
-	  --exclude='bin/' \
-	  --exclude='dist/' \
-	  --exclude='charts/crds/*.yaml' \
-	  ~/src/dio/gateway-pairs/ \
-	  dio@mini:~/src/dio/gateway-pairs-wip/
-	ssh dio@mini 'export PATH="/opt/homebrew/bin:$$HOME/.orbstack/bin:$$PATH" && \
-	  cd ~/src/dio/gateway-pairs-wip && \
-	  DOCKER_HOST=unix://$$HOME/.orbstack/run/docker.sock \
-	  PAIR_PREFIX=$(PAIR_PREFIX) \
-	  make e2e'
-
-## e2e-remote: commit + push any local changes, then run e2e on dio@mini.
-## Use this to share a green run or test on a clean git state.
-e2e-remote:
-	@echo "==> syncing local changes to origin"
-	git add -A && git diff --cached --quiet || git commit -m "wip: sync for remote e2e"
-	git push
-	@echo "==> running e2e on dio@mini"
-	ssh dio@mini 'export PATH="/opt/homebrew/bin:$$HOME/.orbstack/bin:$$PATH" && \
-	  cd ~/src/dio/gateway-pairs && \
-	  git pull --ff-only && \
-	  DOCKER_HOST=unix://$$HOME/.orbstack/run/docker.sock \
-	  PAIR_PREFIX=$(PAIR_PREFIX) \
-	  make e2e'
-
 ## e2e: run full e2e suite (PAIR_PREFIX=tr by default)
 e2e:
 	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) RUN_PAIRS_E2E=1 \
