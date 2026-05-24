@@ -178,8 +178,21 @@ kubectl apply -n tr-dataplane-1 -f gateways-l1-l2.yaml
 kubectl apply -n tr-dataplane-1 -f httproutes.yaml
 ```
 
-The chart does not model tiers directly. The `tiers` values concept is a future
-convenience wrapper; operators can always apply raw manifests.
+The chart does not model tiers directly. `eg-pair` is intentionally a thin
+infrastructure scaffold, not an opinionated application chart. Tiers are an
+operator concern: the number of tiers, their names, their images, and their
+dynamic modules all vary per integration and change independently of the
+infrastructure lifecycle.
+
+Operators apply tier resources as plain Kubernetes manifests or via their own
+Helm chart that targets the pair's dataplane namespace. The only thing they
+need from `eg-pair` is the GatewayClass name and the dataplane namespace name,
+both of which are deterministic from the pair index and prefix.
+
+A `tiers` values list is a planned convenience wrapper for the common case
+where all tiers are known at pair install time and do not need independent
+lifecycle management. When added, it will be additive: operators who prefer
+raw manifests continue to work unchanged.
 
 ---
 
