@@ -181,29 +181,38 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 	release := fmt.Sprintf("eg-pair-%d", deleteIdx)
 	s.T().Logf("deleting %s from %s", release, n.SystemNS)
 
-	// Delete all Gateways in the dataplane NS so EG clears proxy finalizers
-	// before the controller is removed. --wait blocks until EG removes the
-	// proxy Deployment and clears the finalizer on the Gateway object.
+	// Delete all Gateways so EG can clear its finalizer and deprovision the proxy
+	// Deployment before the controller is removed.
 	s.kubectl("delete", "gateways", "--all", "-n", n.DataplaneNS, //nolint:errcheck
 		"--ignore-not-found", "--wait=true", "--timeout=90s")
-
-	// Also delete any residual EnvoyProxy CRs -- these don't carry finalizers
-	// themselves but can leave dangling owner references.
 	s.kubectl("delete", "envoyproxies", "--all", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
 
-	// Wait until EG-managed Deployments AND Services are gone from the dataplane NS.
-	// Services carry the owning-gateway label; Deployments carry managed-by label.
-	// Both must be gone before the namespace can terminate cleanly.
+	// Wait until the proxy Deployment is deleted, meaning EG has stopped
+	// managing the proxy pod. After this point, any Terminating proxy pod is
+	// only waiting out its terminationGracePeriodSeconds (EG default: 360s).
+	// Since the test cluster has no live connections, force-delete those pods
+	// immediately to avoid a 5+ minute wait per test run.
 	s.eventually(func() bool {
-		deploys, err1 := s.kubectl("get", "deployments", "-n", n.DataplaneNS,
+		out, err := s.kubectl("get", "deployments", "-n", n.DataplaneNS,
 			"-l", "app.kubernetes.io/managed-by=envoy-gateway",
 			"-o", "jsonpath={.items}")
-		svcs, err2 := s.kubectl("get", "services", "-n", n.DataplaneNS,
+		return err == nil && strings.TrimSpace(out) == "[]"
+	}, 90*time.Second, 3*time.Second, "EG proxy Deployment not removed from %s", n.DataplaneNS)
+
+	// Force-delete any Terminating proxy pods. Safe here because:
+	// 1. The Deployment is gone -- no new pods will be created.
+	// 2. The test cluster has no live connections to drain.
+	// 3. The pod is only Terminating due to the 360s grace period, not finalizers.
+	s.kubectl("delete", "pods", "--all", "-n", n.DataplaneNS, //nolint:errcheck
+		"--grace-period=0", "--force", "--ignore-not-found")
+
+	// Also wait for EG-owned Services to be removed (they're GC'd after the Deployment).
+	s.eventually(func() bool {
+		out, err := s.kubectl("get", "services", "-n", n.DataplaneNS,
 			"-l", "gateway.envoyproxy.io/owning-gateway-namespace="+n.DataplaneNS,
 			"-o", "jsonpath={.items}")
-		return err1 == nil && strings.TrimSpace(deploys) == "[]" &&
-			err2 == nil && strings.TrimSpace(svcs) == "[]"
-	}, 2*time.Minute, 3*time.Second, "EG-managed resources not gone from %s", n.DataplaneNS)
+		return err == nil && strings.TrimSpace(out) == "[]"
+	}, 30*time.Second, 2*time.Second, "EG proxy Services not removed from %s", n.DataplaneNS)
 
 	s.mustHelm("uninstall", release, "--namespace", n.SystemNS)
 
@@ -223,7 +232,7 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 		s.eventually(func() bool {
 			_, err := s.kubectl("get", "namespace", ns)
 			return err != nil
-		}, 5*time.Minute, 5*time.Second, "Namespace %s not removed", ns)
+		}, 2*time.Minute, 3*time.Second, "Namespace %s not removed", ns)
 	}
 
 	// Verify all cluster-scoped RBAC for this pair is gone.
