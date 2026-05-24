@@ -602,16 +602,65 @@ gateway-helm:
           runner: error
 ```
 
-**Extension APIs:**
+**Extension APIs (feature gates):**
+
+`EnvoyPatchPolicy` lets operators write raw xDS patches for a specific Gateway.
+Required for transit dynamic module configuration. Disabled by default upstream.
 
 ```yaml
 gateway-helm:
   config:
     envoyGateway:
       extensionApis:
-        enableEnvoyPatchPolicy: true    # required for transit dynamic module patches
-        enableBackendLB: false
+        enableEnvoyPatchPolicy: true    # required for EnvoyPatchPolicy resources
+        enableBackendLB: false          # Gateway API backend LB policies
 ```
+
+With `enableEnvoyPatchPolicy: true`, operators can apply per-pair xDS patches:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: add-dynamic-module-filter
+  namespace: tr-dataplane-1
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: l1              # targets only l1's proxy, not l2-a or l2-b
+  type: JSONPatch
+  jsonPatches:
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    operation:
+      op: add
+      path: "/filter_chains/0/filters/0/typed_config/http_filters/0"
+      value: ...
+```
+
+**Extension server (external policy processing):**
+
+EG supports routing policy decisions to an external gRPC server. This is
+the extension server pattern used when policy logic lives outside the proxy.
+
+```yaml
+gateway-helm:
+  config:
+    envoyGateway:
+      extensionManager:
+        service:
+          host: policy-server.tr-system-1.svc.cluster.local
+          port: 8080
+        hooks:
+          xdsTranslator:
+            post:
+            - HTTPListener
+            - Translation
+```
+
+The extension server runs in the pair's system namespace alongside the
+controller. Each pair can have a different extension server (different host,
+different policy logic) by setting different values at install time.
 
 **Runtime flags (EG feature gates):**
 
@@ -625,10 +674,10 @@ gateway-helm:
 ```
 
 `XDSNameSchemeV2` is specifically required for the `tiered-router-eg`
-integration because the dynamic module `.so` files reference xDS resource
-names using the v2 scheme.
+integration. The dynamic module `.so` files reference xDS resource names
+using the v2 scheme, which differs from the default naming.
 
-**Provider: rate limit, shutdown manager:**
+**Rate limit and shutdown manager:**
 
 ```yaml
 gateway-helm:
