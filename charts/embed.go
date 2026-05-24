@@ -22,7 +22,7 @@ import (
 	"io/fs"
 )
 
-//go:embed eg-pair all:crds
+//go:embed all:eg-pair all:crds
 var fs_ embed.FS
 
 // FS returns the full embedded filesystem (charts + crds subdirectory).
