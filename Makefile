@@ -125,7 +125,7 @@ pair-delete:
 	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n $(RELEASE_NS) || true
 
 ## e2e: run full multi-pair e2e suite (PAIR_PREFIX=tr, PAIR_COUNT=2 by default)
-e2e:
+e2e: dep-update
 	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) PAIR_COUNT=$(PAIR_COUNT) RUN_E2E=1 \
 	  go test -v -count=1 -run TestGatewayPairs -timeout 30m ./multipairs/...
 
@@ -134,7 +134,7 @@ e2e-all:
 	$(MAKE) -j3 e2e-simple e2e-simple-gwp e2e
 
 
-e2e-simple:
+e2e-simple: dep-update
 	cd e2e && RUN_E2E=1 \
 	  go test -v -count=1 -run TestSimplePair -timeout 15m ./simple/...
 
