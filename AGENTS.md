@@ -8,6 +8,11 @@ CRDs are installed once via `eg-crds` + `hack/install-crds.sh`.
 
 Load these when working in this repo:
 
+- **eg-namespace-pairs** (`/.agents/skills/eg-namespace-pairs/SKILL.md`)
+  Comprehensive multi-pair architecture: naming model, RBAC shape, certgen,
+  controllerName uniqueness, e2e harness, CRD conflict strategy, namespace
+  hook leak problem, subchart migration plan, embedded assets, multi-tier proxies.
+
 - **envoy-gateway-namespace-mode** (`/.agents/skills/envoy-gateway-namespace-mode/SKILL.md`)
   Gateway Namespace Mode mechanics: Helm config, RBAC shape, JWT vs mTLS auth shift,
   watch mode options, proxy placement, uninstall sequence, Merged Gateways incompatibility.
