@@ -1,53 +1,82 @@
 # gateway-pairs
 
-Envoy Gateway multi-pair deployment: one cluster, N isolated
-controller+dataplane pairs. Each pair is one Helm release of `eg-pair`.
-CRDs are installed once via `eg-crds` + `hack/install-crds.sh`.
+Envoy Gateway multi-pair deployment: one cluster, N isolated controller+dataplane
+pairs. Each pair is one Helm release of `eg-pair`. CRDs are installed once via
+`gwp crds install` (or `make crds-install`). The `gwp` CLI embeds the chart and
+pre-rendered CRD YAML -- no OCI access needed at install time.
 
 ## Skills
 
-Load these when working in this repo:
+Load when working in this repo:
 
-- **envoy-gateway-namespace-pairs** (loaded from hermes agent skills)
+- **eg-namespace-pairs** (hermes agent skill)
   Comprehensive multi-pair architecture: naming model, RBAC shape, certgen,
   controllerName uniqueness, e2e harness, CRD conflict strategy, namespace
-  hook leak problem, subchart migration plan, embedded assets, multi-tier proxies.
-
-- **envoy-gateway-namespace-mode** (`/.agents/skills/envoy-gateway-namespace-mode/SKILL.md`)
-  Gateway Namespace Mode mechanics: Helm config, RBAC shape, JWT vs mTLS auth shift,
-  watch mode options, proxy placement, uninstall sequence, Merged Gateways incompatibility.
-
-- **gateway-pairs-e2e** (`/.agents/skills/gateway-pairs-e2e/SKILL.md`)
-  Running, debugging, and extending the k3d e2e suite.
-
-- **gateway-pairs-chart-authoring** (`/.agents/skills/gateway-pairs-chart-authoring/SKILL.md`)
-  Modifying the eg-crds or eg-pair charts, values conventions, RBAC shape,
-  and PoC gaps to close.
+  hook leak, subchart migration, embedded assets, multi-tier proxies,
+  pitfalls (repoRoot path, embed all:, installPair required --set flags).
 
 ## Hard rules
 
-- All `kubectl` and `helm` commands must use `--context k3d-<cluster>`.
-  Never fall through to the user's current kube context.
-- CRDs are installed via `hack/install-crds.sh`, not `helm install eg-crds`.
-  The eg-crds chart only tracks metadata.
-- `make e2e` is the canonical e2e entry point. Always use `-count=1`.
-- Pair index is an integer. All names derive from it via `_helpers.tpl`.
-  Do not hardcode `tr-system-1` or similar strings outside the helpers.
-- Watch list in the EG ConfigMap must include the system namespace.
-  Omitting it causes Accepted-but-not-Programmed Gateways. There is no
-  separate dataplane namespace -- one namespace per pair.
+- **Two namespaces per pair.** `tr-system-{i}` = controller. `tr-dataplane-{i}` =
+  Gateways + proxies + HTTPRoutes. Proxy Deployments land in `tr-dataplane-{i}`
+  because EG uses GatewayNamespace mode (proxy in Gateway's namespace).
+- **Names come from `names.For(prefix, index)`.** Never hardcode `tr-system-1`
+  or `tr-1` outside the `names` package or chart helpers.
+- **Three required per-pair flags.** `gwp pair install` and `make pair-install`
+  both inject these automatically. Raw `helm install` callers must pass them:
+  ```
+  --set gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-1
+  --set gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces
+  --set gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-1,tr-dataplane-1}
+  ```
+  Without `controllerName`, all controllers use the upstream default and fight
+  over each other's GatewayClasses. Without `watch.namespaces`, Gateways in
+  `tr-dataplane-{i}` are invisible to the controller.
+- **CRDs from upstream only.** `make generate-crds` pre-renders from
+  `gateway-crds-helm:v1.8.0` into `charts/crds/`. The binary embeds those.
+  `eg-crds` chart was deleted.
+- **Uninstall sequence.** Delete Gateways first, wait for proxy Deployments to
+  be gone, then helm uninstall. Skipping step 1 leaves proxy finalizers stuck
+  and the namespace hangs in Terminating.
+- **e2e.** Always use `-count=1`. Three suites:
+  - `make e2e-simple` -- single pair, raw Helm
+  - `make e2e-simple-gwp` -- single pair, gwp CLI (prereq: build)
+  - `make e2e` -- multipairs, PAIR_COUNT=N
 
 ## Layout
 
 ```
+cmd/gwp/            CLI entry point (baked ldflags: version, egVersion, commit, date)
+internal/
+  cli/              cobra command tree (--output text|json global flag)
+  kube/             exec kubectl via dio/sh; Outputter interface
+  helm/             exec helm via dio/sh; Runner interface
+  fake/             in-process fakes for unit tests
+names/              names.For(prefix, index) -- zero deps, fully tested
+crd/                CRD detect + install; crd.State string constants for JSON
+pair/               pair.Install/Delete/Get/List/Info; JSON-tagged Status types
+gwpapi/             public Go embedding API (gwpapi.Client wraps crd + pair)
 charts/
-  eg-crds/          CRD lifecycle chart (install once)
-  eg-pair/          Controller+dataplane pair chart (one release per pair)
-e2e/                testify/suite harness (build tag: e2e)
+  eg-pair/          Helm chart (gateway-helm subchart for controller)
+  crds/             pre-rendered CRD YAML (gitignored, generated by make generate-crds)
+  embed.go          //go:embed all:eg-pair all:crds
+e2e/
+  testutil/         Harness + manifest builders (shared across all suites)
+  simple/           single-pair e2e via raw Helm
+  simple-gwp/       single-pair e2e via gwp binary
+  multipairs/       N-pair isolation, delete/reinstall, traffic (PAIR_COUNT env)
 hack/
-  install-crds.sh   CRD install script (helm template | kubectl apply)
+  install-crds.sh   legacy script (provider-managed detection, server-side apply)
 docs/
-  design.md         Architecture, RBAC model, CRD conflict scenarios
-.agents/
-  skills/           Hermes Agent in-repo skills
+  design.md         Architecture, RBAC, watch list, uninstall sequence
+  cli.md            CLI design + implementation status
+  api.md            gwpapi Go embedding API reference
 ```
+
+## JSON output
+
+All `gwp` commands support `-o json`. The flag is on the root command so it
+works everywhere: `gwp -o json pair status`, `gwp -o json crds detect`, etc.
+Types in `names`, `crd`, `pair` carry json struct tags. `crd.State` is a string
+constant (`"not-installed"`, `"installed"`, `"provider-managed"`) -- no custom
+MarshalJSON needed.
