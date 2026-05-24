@@ -851,8 +851,6 @@ Pair 1 (tr-1):
 
 Layer 2 (chart-managed):
   Controller:          envoy-gateway     Available (1/1)
-  Default EnvoyProxy:  tr-system-1/eg    (single-tier convenience; unused if tiered)
-  Default Gateway:     tr-dataplane-1/eg Programmed=True
 
 Layer 3 (operator-managed in tr-dataplane-1):
   EnvoyProxy  l1    (envoyService.name: l1,   image: custom-envoy:v1)

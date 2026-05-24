@@ -77,31 +77,41 @@ func (s *gatewayPairsSuite) Test06_VerifyGatewayClasses() {
 }
 
 func (s *gatewayPairsSuite) Test07_VerifyGateways() {
-	// installPair already waited for listeners Programmed. Fast re-check.
-	// Use listener-level conditions -- ClusterIP gateways won't have a top-level
-	// Programmed=True due to AddressNotAssigned.
+	// No default Gateway is created by the chart (gateway.create: false).
+	// Apply a test Gateway+EnvoyProxy into the dataplane NS, verify it reaches
+	// Programmed, then clean up. This validates the full EG reconcile path.
 	for _, i := range []int{1, 2, 3} {
 		n := namesFor(i)
-		out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
-			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
-		s.Require().NoError(err)
-		s.Contains(out, "Programmed=True",
-			"Gateway eg in %s listeners not Programmed", n.SystemNS)
+		s.applyManifest(n.DataplaneNS, testEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
+		s.applyManifest(n.DataplaneNS, testGatewayManifest(n.DataplaneNS, n.GWClass))
+		s.eventually(func() bool {
+			out, err := s.kubectl("get", "gateway", "eg-test", "-n", n.DataplaneNS,
+				"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
+			return err == nil && strings.Contains(out, "Programmed=True")
+		}, 3*time.Minute, 5*time.Second,
+			"test Gateway eg-test in %s not Programmed", n.DataplaneNS)
+		s.kubectl("delete", "gateway", "eg-test", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
+		s.kubectl("delete", "envoyproxy", "eg-test", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
 	}
 }
 
 func (s *gatewayPairsSuite) Test08_VerifyDataplaneProxies() {
+	// Apply a test Gateway+EnvoyProxy, wait for proxy Deployment in dataplaneNS,
+	// then clean up. Confirms the controller creates proxy resources correctly.
 	for _, i := range []int{1, 2, 3} {
 		n := namesFor(i)
-		// In GatewayNamespace mode proxy lands in the Gateway's namespace = SystemNS.
-		s.T().Logf("waiting for proxy Deployment in %s", n.SystemNS)
+		s.applyManifest(n.DataplaneNS, testEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
+		s.applyManifest(n.DataplaneNS, testGatewayManifest(n.DataplaneNS, n.GWClass))
+		s.T().Logf("waiting for proxy Deployment in %s", n.DataplaneNS)
 		s.eventually(func() bool {
-			out, err := s.kubectl("get", "deployments", "-n", n.SystemNS,
-				"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
+			out, err := s.kubectl("get", "deployments", "-n", n.DataplaneNS,
+				"-l", "gateway.envoyproxy.io/owning-gateway-name=eg-test",
 				"-o", "jsonpath={.items[0].status.availableReplicas}")
 			return err == nil && strings.TrimSpace(out) == "1"
 		}, 3*time.Minute, 5*time.Second,
-			"Envoy proxy not ready in %s", n.SystemNS)
+			"Envoy proxy not ready in %s", n.DataplaneNS)
+		s.kubectl("delete", "gateway", "eg-test", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
+		s.kubectl("delete", "envoyproxy", "eg-test", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
 	}
 }
 
@@ -110,20 +120,28 @@ func (s *gatewayPairsSuite) Test08_VerifyDataplaneProxies() {
 func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
 	n := namesFor(1)
 
-	// Echo backend in dataplaneNS -- tenants deploy here.
+	// Apply test Gateway+EnvoyProxy into dataplaneNS (Layer 3 pattern).
+	s.applyManifest(n.DataplaneNS, testEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
+	s.applyManifest(n.DataplaneNS, testGatewayManifest(n.DataplaneNS, n.GWClass))
+	s.eventually(func() bool {
+		out, err := s.kubectl("get", "gateway", "eg-test", "-n", n.DataplaneNS,
+			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
+		return err == nil && strings.Contains(out, "Programmed=True")
+	}, 3*time.Minute, 5*time.Second, "test Gateway not Programmed")
+
+	// Echo backend in dataplaneNS.
 	s.applyManifest(n.DataplaneNS, echoDeploymentManifest(n.DataplaneNS))
 	s.applyManifest(n.DataplaneNS, echoServiceManifest(n.DataplaneNS))
 	s.mustKubectl("rollout", "status", "deployment/echo", "-n", n.DataplaneNS, "--timeout=90s")
 
-	// HTTPRoute in dataplaneNS referencing Gateway in systemNS.
-	// Gateway allows routes from dataplaneNS via allowedRoutes: from: Selector.
-	s.applyManifest(n.DataplaneNS, httpRouteManifest(n.SystemNS, n.DataplaneNS))
+	// HTTPRoute in dataplaneNS referencing the test Gateway (same namespace).
+	s.applyManifest(n.DataplaneNS, httpRouteManifest("eg-test", n.DataplaneNS))
 
-	// Gateway Service lives in systemNS (proxy is co-located with Gateway).
-	gwSvc, err := s.findGatewayService(n.SystemNS)
-	s.Require().NoError(err, "could not find Gateway Service in %s", n.SystemNS)
+	// Gateway Service lives in dataplaneNS (proxy is there -- GatewayNamespace mode).
+	gwSvc, err := s.findGatewayService(n.DataplaneNS)
+	s.Require().NoError(err, "could not find Gateway Service in %s", n.DataplaneNS)
 
-	stopFwd := s.portForward(n.SystemNS, "svc/"+gwSvc, "18080:80")
+	stopFwd := s.portForward(n.DataplaneNS, "svc/"+gwSvc, "18080:80")
 	defer stopFwd()
 	time.Sleep(2 * time.Second)
 
@@ -254,17 +272,17 @@ func (s *gatewayPairsSuite) installPair(index int) {
 	s.mustKubectl("wait", "deployment/envoy-gateway",
 		"-n", n.SystemNS, "--for=condition=Available", "--timeout=5m")
 
-	// Wait for Gateway to have all listeners Programmed. Check listener-level
-	// conditions rather than top-level -- ClusterIP services never get an
-	// address assigned so top-level Programmed may stay False even when
-	// the proxy is connected and routing works.
-	s.T().Logf("waiting for Gateway eg in %s listeners to be Programmed", n.SystemNS)
+	// Health gate: GatewayClass Accepted confirms the controller is running
+	// and has reconciled. No default Gateway is created (gateway.create: false)
+	// so we do not wait for Programmed. Layer 3 operators apply their own
+	// Gateways after this returns.
+	s.T().Logf("waiting for GatewayClass %s to be Accepted", n.GWClass)
 	s.eventually(func() bool {
-		out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
-			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
-		return err == nil && strings.Contains(out, "Programmed=True")
-	}, 5*time.Minute, 5*time.Second,
-		"Gateway eg in %s listeners not Programmed after install", n.SystemNS)
+		out, err := s.kubectl("get", "gatewayclass", n.GWClass,
+			"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
+		return err == nil && strings.Contains(out, "Accepted=True")
+	}, 3*time.Minute, 5*time.Second,
+		"GatewayClass %s not Accepted after install", n.GWClass)
 }
 
 func (s *gatewayPairsSuite) applyManifest(ns, manifest string) {
@@ -392,7 +410,7 @@ spec:
 `, ns)
 }
 
-func httpRouteManifest(gatewayNS, routeNS string) string {
+func httpRouteManifest(gatewayName, ns string) string {
 	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -400,8 +418,7 @@ metadata:
   namespace: %s
 spec:
   parentRefs:
-  - name: eg
-    namespace: %s
+  - name: %s
   rules:
   - matches:
     - path:
@@ -410,5 +427,48 @@ spec:
     backendRefs:
     - name: echo
       port: 80
-`, routeNS, gatewayNS)
+`, ns, gatewayName)
+}
+
+func testEnvoyProxyManifest(ns, gcName string) string {
+	return fmt.Sprintf(`apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: eg-test
+  namespace: %s
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: eg-test
+        type: ClusterIP
+      envoyDeployment:
+        pod:
+          labels:
+            eg-pair-test: "true"
+`, ns)
+}
+
+func testGatewayManifest(ns, gcName string) string {
+	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: eg-test
+  namespace: %s
+spec:
+  gatewayClassName: %s
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: eg-test
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same
+`, ns, gcName)
 }

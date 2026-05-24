@@ -43,15 +43,21 @@ controller:
   # Enable only if you have a single pair and need zone-aware proxy spreading.
   topologyInjector: false
 
-# RBAC switches. Normally both true.
-# Gateway resource deployed in the system namespace.
-# Tenants deploy HTTPRoutes in the same namespace (tr-system-{i}).
+# Default Gateway and EnvoyProxy are off by default.
+# eg-pair is a pure infrastructure scaffold; operators apply their own
+# Gateways and EnvoyProxies into tr-dataplane-{i} as Layer 3 resources.
+# Set create: true only for single-tier convenience or e2e testing.
 gateway:
+  create: false
   name: eg
   listeners:
     - name: http
       port: 80
       protocol: HTTP
+
+envoyProxy:
+  create: false
+  name: eg
 
 # RBAC switches. Normally both true.
 rbac:

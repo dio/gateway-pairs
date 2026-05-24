@@ -208,7 +208,7 @@ and what breaks if you get it wrong.
 They must be installed before any pair. One installation serves all pairs.
 
 ```
-GatewayClass              (cluster-scoped, unique per pair; see Layer 2)
+GatewayClass             (cluster-scoped, unique per pair; see Layer 2)
 CustomResourceDefinitions (cluster-scoped, shared; one-time install)
 ```
 
@@ -303,7 +303,6 @@ the Gateway. The controller finds it via the watch list (it watches
 | Resource | Layer | Who applies | Who owns |
 |---|---|---|---|
 | `GatewayClass tr-{i}` | 2 | `eg-pair` chart | Helm release |
-| `EnvoyProxy eg` (default) | 2 | `eg-pair` chart | Helm release |
 | `EnvoyProxy l1` | 3 | operator | operator |
 | `EnvoyProxy l2-a` | 3 | operator | operator |
 | `Gateway l1` | 3 | operator | operator |
@@ -376,10 +375,10 @@ Gateways reference the same EG version and run in the same cluster.
 | Envoy proxy Deployments + Services | tr-dataplane-{i} | EG controller (generated) |
 | HTTPRoutes | tr-dataplane-{i} | operator-managed |
 
-> The chart also creates `EnvoyProxy/eg` in `tr-system-{i}` and `Gateway/eg`
-> in `tr-dataplane-{i}` as a single-tier convenience default. Operators running
-> a tiered topology can disable these via `gateway.create: false` and
-> `envoyProxy.create: false` (planned values).
+> `gateway.create` and `envoyProxy.create` are both `false` by default.
+> The chart is a pure infrastructure scaffold. For single-tier testing or
+> e2e validation, pass `--set gateway.create=true --set envoyProxy.create=true`
+> to get a minimal running proxy without applying Layer 3 manifests.
 
 ---
 

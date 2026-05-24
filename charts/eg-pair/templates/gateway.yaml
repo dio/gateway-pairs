@@ -1,12 +1,11 @@
-{{- $sysNS := include "eg-pair.systemNamespace" . }}
+{{- if .Values.gateway.create }}
 {{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
 {{- $gcName := include "eg-pair.gatewayClassName" . }}
-
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: {{ .Values.gateway.name }}
-  namespace: {{ $sysNS }}
+  namespace: {{ $dpNS }}
   labels:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     eg-pair: {{ .Values.pair.index | quote }}
@@ -19,13 +18,9 @@ spec:
     protocol: {{ .protocol }}
     allowedRoutes:
       namespaces:
-        # Selector: HTTPRoutes live in tr-dataplane-{i} and attach here.
-        # EG places the proxy in the Gateway's namespace (tr-system-{i}),
-        # so controller + proxy share the system namespace.
-        # Tenants write HTTPRoutes in tr-dataplane-{i} and reference this
-        # Gateway with parentRefs.namespace: tr-system-{i}.
         from: Selector
         selector:
           matchLabels:
-            kubernetes.io/metadata.name: {{ $dpNS }}
+            tr/gateway-routes: "true"
   {{- end }}
+{{- end }}

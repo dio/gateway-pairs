@@ -1,23 +1,23 @@
 Pair {{ .Values.pair.index }} deployed.
 
-System namespace (controller + proxy + Gateway):
-  {{ include "eg-pair.systemNamespace" . }}
-
-Dataplane namespace (tenant HTTPRoutes):
-  {{ include "eg-pair.dataplaneNamespace" . }}
-
-GatewayClass: {{ include "eg-pair.gatewayClassName" . }}
+System namespace:    {{ include "eg-pair.systemNamespace" . }}
+Dataplane namespace: {{ include "eg-pair.dataplaneNamespace" . }}
+GatewayClass:        {{ include "eg-pair.gatewayClassName" . }}
 
 Wait for the controller:
   kubectl rollout status deployment/envoy-gateway \
     -n {{ include "eg-pair.systemNamespace" . }} --timeout=120s
 
-Check Gateway status:
-  kubectl get gateway {{ .Values.gateway.name }} \
-    -n {{ include "eg-pair.systemNamespace" . }}
+The pair is ready for Layer 3 resources. Apply your Gateways and EnvoyProxies
+into {{ include "eg-pair.dataplaneNamespace" . }}:
 
-Tenants deploy HTTPRoutes in {{ include "eg-pair.dataplaneNamespace" . }}
-referencing the Gateway with parentRefs.namespace:
-  parentRefs:
-  - name: {{ .Values.gateway.name }}
-    namespace: {{ include "eg-pair.systemNamespace" . }}
+  kubectl apply -n {{ include "eg-pair.dataplaneNamespace" . }} -f envoyproxies.yaml
+  kubectl apply -n {{ include "eg-pair.dataplaneNamespace" . }} -f gateways.yaml
+  kubectl apply -n {{ include "eg-pair.dataplaneNamespace" . }} -f httproutes.yaml
+
+Each Gateway must reference this pair's GatewayClass:
+  spec:
+    gatewayClassName: {{ include "eg-pair.gatewayClassName" . }}
+
+Run: gwp pair info {{ .Values.pair.index }}
+  to get the exact values needed for your Gateway manifests.

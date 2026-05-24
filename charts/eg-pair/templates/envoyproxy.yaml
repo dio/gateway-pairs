@@ -1,13 +1,10 @@
-{{- $sysNS := include "eg-pair.systemNamespace" . }}
-
-# EnvoyProxy configures the data-plane behaviour for this pair.
-# Lives in the system namespace alongside the Gateway.
-# Referenced by the GatewayClass parametersRef.
+{{- if .Values.envoyProxy.create }}
+{{- $dpNS := include "eg-pair.dataplaneNamespace" . }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
-  name: eg
-  namespace: {{ $sysNS }}
+  name: {{ .Values.envoyProxy.name }}
+  namespace: {{ $dpNS }}
   labels:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     eg-pair: {{ .Values.pair.index | quote }}
@@ -21,3 +18,4 @@ spec:
             eg-pair: {{ .Values.pair.index | quote }}
       envoyService:
         type: ClusterIP
+{{- end }}
