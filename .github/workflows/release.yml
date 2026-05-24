@@ -44,35 +44,36 @@ jobs:
     needs: goreleaser
     env:
       EG_VERSION: v1.8.0
-      # Strip the leading 'v' for helm chart version: v0.1.0 -> 0.1.0
       CHART_VERSION: ${{ github.ref_name }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
 
+    - name: Fetch subchart dependencies
+      # eg-pair depends on gateway-helm as a subchart.
+      # helm package requires the tarballs to be present in charts/.
+      run: helm dependency update ./charts/eg-pair
+
     - name: Login to ghcr.io
       run: |
         echo "${{ secrets.GITHUB_TOKEN }}" \
           | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
 
-    - name: Package and push charts
+    - name: Package and push eg-pair chart
       run: |
         # Strip leading 'v' from tag: v0.1.0 -> 0.1.0
         VERSION="${CHART_VERSION#v}"
 
-        for chart in eg-crds eg-pair; do
-          helm package "charts/${chart}" \
-            --version "${VERSION}" \
-            --app-version "${EG_VERSION}"
+        helm package charts/eg-pair \
+          --version "${VERSION}" \
+          --app-version "${EG_VERSION}"
 
-          helm push "${chart}-${VERSION}.tgz" \
-            "oci://ghcr.io/${{ github.repository_owner }}/gateway-pairs/charts"
-        done
+        helm push "eg-pair-${VERSION}.tgz" \
+          "oci://ghcr.io/${{ github.repository_owner }}/gateway-pairs/charts"
 
-    - name: Print chart refs
+    - name: Print chart ref
       run: |
         VERSION="${CHART_VERSION#v}"
         echo "Published:"
-        echo "  oci://ghcr.io/${{ github.repository_owner }}/gateway-pairs/charts/eg-crds:${VERSION}"
         echo "  oci://ghcr.io/${{ github.repository_owner }}/gateway-pairs/charts/eg-pair:${VERSION}"

@@ -22,16 +22,19 @@ jobs:
     - name: Verify go mod tidy
       run: make tidy-check
 
-    - name: generate-assets
+    - name: Generate assets (CRDs + subchart deps)
       run: make generate-assets
 
-    - name: build
+    - name: Build
       run: make build
 
-    - name: vet
+    - name: Vet
       run: make vet
 
-    - name: helm-lint
+    - name: Unit tests
+      run: make test
+
+    - name: Helm lint
       run: make helm-lint
 
   e2e:
@@ -47,9 +50,14 @@ jobs:
 
     - uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
 
-    - name: install k3d
-      run: |
-        curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.7.4 bash
+    - name: Install k3d
+      run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.7.4 bash
 
-    - name: run e2e
+    - name: e2e-simple (raw Helm)
+      run: make e2e-simple
+
+    - name: e2e-simple-gwp (gwp CLI)
+      run: make e2e-simple-gwp
+
+    - name: e2e multipairs
       run: make e2e

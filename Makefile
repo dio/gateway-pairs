@@ -8,6 +8,7 @@ PAIR         ?= 1
 # Override: PAIR_PREFIX=tr make pair-install  →  tr-release-1, tr-system-1, ...
 # Set PAIR_PREFIX="" to drop the prefix entirely: release-1, system-1, etc.
 PAIR_PREFIX  ?= tr
+PAIR_COUNT   ?= 2
 
 # Derived names from PAIR_PREFIX + PAIR. Mirror _helpers.tpl logic.
 _SEP         := $(if $(PAIR_PREFIX),-)
@@ -16,8 +17,9 @@ SYSTEM_NS     = $(PAIR_PREFIX)$(_SEP)system-$(PAIR)
 
 BIN = bin/gwp
 
-.PHONY: all build generate-crds tidy tidy-check vet \
-        helm-lint cluster cluster-delete crds-install pair-install pair-delete e2e clean
+.PHONY: all build generate-crds generate-assets dep-update tidy tidy-check vet test \
+        helm-lint cluster cluster-delete crds-install pair-install pair-delete e2e \
+        e2e-simple e2e-simple-gwp clean
 
 all: build
 
@@ -34,6 +36,13 @@ build: generate-crds dep-update
 ## dep-update: fetch Helm subchart dependencies
 dep-update:
 	helm dependency update ./charts/eg-pair
+
+## generate-assets: generate CRDs + fetch subchart deps (called by goreleaser and CI)
+generate-assets: generate-crds dep-update
+
+## test: run unit tests (no cluster required)
+test:
+	go test ./names/... ./crd/... ./pair/... ./gwpapi/... ./internal/...
 
 ## generate-crds: pre-render CRD YAML from gateway-crds-helm into charts/crds/
 generate-crds:
@@ -104,6 +113,9 @@ pair-install:
 	  --namespace $(SYSTEM_NS) --create-namespace \
 	  --set pair.index=$(PAIR) \
 	  --set pair.namePrefix=$(PAIR_PREFIX) \
+	  --set "gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/$(PAIR_PREFIX)$(_SEP)$(PAIR)" \
+	  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces" \
+	  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={$(SYSTEM_NS),$(PAIR_PREFIX)$(_SEP)dataplane-$(PAIR)}" \
 	  --skip-crds \
 	  --wait --timeout 120s
 	kubectl --context $(KTX) rollout status deployment/envoy-gateway \
@@ -113,15 +125,20 @@ pair-install:
 pair-delete:
 	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n $(RELEASE_NS) || true
 
-## e2e: run full multi-pair e2e suite (PAIR_PREFIX=tr by default)
+## e2e: run full multi-pair e2e suite (PAIR_PREFIX=tr, PAIR_COUNT=2 by default)
 e2e:
-	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) RUN_E2E=1 \
-	  go test -v -count=1 -tags=e2e -run TestGatewayPairs -timeout 20m ./multipairs/...
+	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) PAIR_COUNT=$(PAIR_COUNT) RUN_E2E=1 \
+	  go test -v -count=1 -run TestGatewayPairs -timeout 30m ./multipairs/...
 
-## e2e-simple: run single-pair sanity check (~3 minutes)
+## e2e-simple: run single-pair sanity check via raw Helm (~5 min)
 e2e-simple:
 	cd e2e && RUN_E2E=1 \
 	  go test -v -count=1 -run TestSimplePair -timeout 15m ./simple/...
+
+## e2e-simple-gwp: run single-pair sanity check via gwp binary (~5 min)
+e2e-simple-gwp: build
+	cd e2e && RUN_E2E=1 GWP_BIN=$(CURDIR)/$(BIN) \
+	  go test -v -count=1 -run TestGWPSingle -timeout 20m ./simple-gwp/...
 
 ## clean: remove build artifacts and generated CRDs
 clean:

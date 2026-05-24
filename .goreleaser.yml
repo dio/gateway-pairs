@@ -51,10 +51,10 @@ release:
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
-  # Embed the bundled EG version and Gateway API version in the release notes.
+  # Embed the bundled EG and Gateway API versions in the release notes.
   extra_files:
-    - glob: internal/assets/crds/envoy-gateway.yaml
-    - glob: internal/assets/crds/gateway-api-standard.yaml
+    - glob: charts/crds/envoy-gateway.yaml
+    - glob: charts/crds/gateway-api-standard.yaml
 
 brews:
   - name: gwp

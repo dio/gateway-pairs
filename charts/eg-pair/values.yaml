@@ -69,8 +69,17 @@ rbac:
 
 # Values passed to the gateway-helm subchart.
 # Static defaults -- the same for every pair.
-# Per-pair values (controllerName, watch.namespaces) are injected by
-# gwp pair install at install time via --set flags.
+#
+# Per-pair values (controllerName, watch.namespaces) cannot be derived by the
+# chart itself because Helm subchart values are resolved before template
+# rendering. They are computed from pair.namePrefix + pair.index and injected
+# by `gwp pair install` (or make pair-install) at install time:
+#
+#   --set "gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-1"
+#   --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces"
+#   --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-1,tr-dataplane-1}"
+#
+# Do not set these manually. Use gwp pair install or make pair-install.
 gateway-helm:
   config:
     envoyGateway:

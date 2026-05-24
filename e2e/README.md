@@ -15,12 +15,18 @@ delete and reinstall, then tears down.
 ## Running
 
 ```bash
-# Full suite (creates cluster, installs everything, tears down on success)
+# Full multipairs suite (creates k3d cluster, installs 2 pairs, tears down)
 make e2e
 
-# Custom namespace prefix (default: tr)
-PAIR_PREFIX=myapp make e2e
+# More pairs on a larger machine
+PAIR_COUNT=5 make e2e
 
+# Single-pair smoke test via raw Helm (~5 min) -- exercises the chart directly
+make e2e-simple
+
+# Single-pair smoke test via gwp binary (~5 min) -- exercises the CLI end-to-end
+make e2e-simple-gwp
+```
 # Keep cluster after run
 KEEP_CLUSTER=1 make e2e
 
@@ -29,8 +35,7 @@ REUSE_CLUSTER=1 make e2e
 
 # Direct go test
 cd e2e
-PAIR_PREFIX=tr RUN_PAIRS_E2E=1 \
-  go test -v -count=1 -tags=e2e -run TestGatewayPairs ./...
+RUN_E2E=1 go test -v -count=1 -run TestGatewayPairs ./multipairs/...
 ```
 
 Always use `-count=1`. Cached results skip the real cluster run.
@@ -56,30 +61,29 @@ The same prefix must be passed to both the test suite and the chart:
 | Test | What it proves |
 |---|---|
 | 01_InstallCRDs | Gateway API v1.5.1 + EG CRDs present |
-| 02_InstallPair1 | eg-pair-1 controller Available |
-| 03_InstallPair2 | eg-pair-2 controller Available |
-| 04_InstallPair3 | eg-pair-3 controller Available |
-| 05_VerifyIsolation | Each controller Available in own NS; no leak into dataplane NS |
-| 06_VerifyGatewayClasses | GatewayClasses {prefix}-1/2/3 all Accepted |
-| 07_VerifyGateways | Gateways in each system NS reach Programmed=True |
-| 08_VerifyDataplaneProxies | Envoy proxy Deployment available (in system NS) |
+| 02_InstallAllPairs | All N pairs install; each controller Available |
+| 05_VerifyIsolation | Each controller Available in own NS; no leak across pairs |
+| 06_VerifyGatewayClasses | GatewayClasses {prefix}-1..N all Accepted |
+| 07_VerifyGateways | Test Gateways in each dataplane NS reach Programmed=True |
+| 08_VerifyDataplaneProxies | Envoy proxy Deployment available in dataplane NS |
 | 09_TrafficThroughPair1 | Echo server + HTTPRoute + port-forward → HTTP 200 |
 | 10_DeletePair2 | helm uninstall removes all cluster-scoped resources for pair 2 |
-| 11_PairsUnaffectedByDelete | Pairs 1 and 3 still healthy after pair 2 deleted |
+| 11_PairsUnaffectedByDelete | All pairs except 2 still healthy after pair 2 deleted |
 | 12_ReinstallPair2 | Pair 2 slot is reusable; reinstall recovers within timeout |
 
 ## Proxy namespace note
 
 In GatewayNamespace mode EG places the proxy Deployment in the **Gateway
-object's namespace** (SystemNS). DataplaneNS holds tenant HTTPRoutes only.
-The `allowedRoutes` selector on the Gateway listener permits cross-namespace
-attachment from DataplaneNS.
+object's namespace** (DataplaneNS). The controller (`envoy-gateway`) itself
+lives in SystemNS. HTTPRoutes also go in DataplaneNS and reference the Gateway
+by name (same namespace, no `parentRefs.namespace` needed).
 
 ## Environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
 | `PAIR_PREFIX` | `tr` | Namespace prefix for all derived names |
+| `PAIR_COUNT` | `2` | Number of pairs to install and test (min 2) |
 | `KEEP_CLUSTER` | `0` | If `1`, skip cluster delete on teardown |
 | `KEEP_CLUSTER_ON_FAILURE` | `0` | If `1`, keep cluster only on failure |
 | `REUSE_CLUSTER` | `0` | If `1`, skip cluster create and CRD install |
@@ -87,8 +91,8 @@ attachment from DataplaneNS.
 ## Debugging
 
 ```bash
-KEEP_CLUSTER=1 REUSE_CLUSTER=1 RUN_PAIRS_E2E=1 \
-  go test -v -count=1 -tags=e2e -run TestGatewayPairs ./...
+KEEP_CLUSTER=1 REUSE_CLUSTER=1 RUN_E2E=1 \
+  go test -v -count=1 -run TestGatewayPairs ./multipairs/...
 
 # Overall state
 kubectl --context k3d-gw-pairs-e2e get ns | grep -E 'release|system|dataplane'
@@ -97,8 +101,8 @@ kubectl --context k3d-gw-pairs-e2e get gateway -A
 
 # One pair (replace 1 with failing index)
 kubectl --context k3d-gw-pairs-e2e logs -n tr-system-1 deploy/envoy-gateway | tail -30
-kubectl --context k3d-gw-pairs-e2e get gateway eg -n tr-system-1 -o yaml | grep -A20 conditions
-kubectl --context k3d-gw-pairs-e2e get all -n tr-system-1
+kubectl --context k3d-gw-pairs-e2e get gateway eg-test -n tr-dataplane-1 -o yaml | grep -A20 conditions
+kubectl --context k3d-gw-pairs-e2e get all -n tr-dataplane-1
 ```
 
 ## Module
