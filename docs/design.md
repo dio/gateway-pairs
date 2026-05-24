@@ -208,8 +208,8 @@ and what breaks if you get it wrong.
 They must be installed before any pair. One installation serves all pairs.
 
 ```
-GatewayClass              (cluster-scoped, but per-pair -- see Layer 2)
-CustomResourceDefinitions (cluster-scoped, shared -- this is the one-time install)
+GatewayClass              (cluster-scoped, unique per pair; see Layer 2)
+CustomResourceDefinitions (cluster-scoped, shared; one-time install)
 ```
 
 `gwp crds install` handles this. It detects whether the cluster already has
@@ -262,17 +262,62 @@ kubectl apply -n tr-dataplane-1 -f gateways-l1-l2.yaml
 kubectl apply -n tr-dataplane-1 -f httproutes.yaml
 ```
 
-The only coupling between Layer 3 and Layer 2 is the `gatewayClassName` field
-in each Gateway manifest. It must reference the pair's GatewayClass:
+The coupling between Layer 3 and Layer 2 has two parts.
+
+**Part 1: `gatewayClassName` in every Gateway manifest**
+
+Every Gateway in `tr-dataplane-{i}` must reference the pair's GatewayClass.
+This is what ties the Gateway to this pair's controller and not to any other.
 
 ```yaml
 spec:
-  gatewayClassName: tr-1    # must match the GatewayClass created by eg-pair-1
+  gatewayClassName: tr-1    # the GatewayClass created by eg-pair-1
 ```
 
-Everything else in Layer 3 is self-contained. Multiple `tiered-router-eg`
-tenants in the same cluster each get their own pair (Layer 2 install) and
-their own `tr-dataplane-{i}` namespace into which they apply their topology.
+This is the only field the operator must get from `eg-pair`. It is
+deterministic: `gwp pair info 1` prints it, and it follows the naming rule
+`{prefix}-{id}` from the pair's `namePrefix` and `index` values.
+
+**Part 2: `infrastructure.parametersRef` in each Gateway**
+
+Each Gateway also references its own `EnvoyProxy` CR for per-tier
+customization. This reference is within `tr-dataplane-{i}`, same namespace
+as the Gateway. Cross-namespace references are not supported here.
+
+```yaml
+spec:
+  gatewayClassName: tr-1          # ties to Layer 2 (the pair's controller)
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: l1                    # ties to Layer 3 (this tier's EnvoyProxy)
+```
+
+The `EnvoyProxy` is entirely Layer 3; it is applied by the operator alongside
+the Gateway. The controller finds it via the watch list (it watches
+`tr-dataplane-{i}`) but does not own it.
+
+**What is Layer 2 and what is Layer 3:**
+
+| Resource | Layer | Who applies | Who owns |
+|---|---|---|---|
+| `GatewayClass tr-{i}` | 2 | `eg-pair` chart | Helm release |
+| `EnvoyProxy eg` (default) | 2 | `eg-pair` chart | Helm release |
+| `EnvoyProxy l1` | 3 | operator | operator |
+| `EnvoyProxy l2-a` | 3 | operator | operator |
+| `Gateway l1` | 3 | operator | operator |
+| `Gateway l2-a` | 3 | operator | operator |
+| `HTTPRoute` | 3 | operator | operator |
+
+The chart-owned `EnvoyProxy/eg` is a single-tier convenience default. Operators
+running a tiered topology ignore it or disable it with `envoyProxy.create: false`
+(planned). It does not interfere with operator-applied EnvoyProxies because each
+Gateway explicitly names its own via `parametersRef`.
+
+`gwp pair status` reports both Layer 2 and Layer 3 resources so operators can
+see the full picture for a pair in one command. See `docs/cli.md` for the full
+specification.
 
 ### The full picture for N tenants
 
