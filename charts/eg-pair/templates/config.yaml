@@ -1,5 +1,4 @@
 {{- $sysNS := include "eg-pair.systemNamespace" . }}
-{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
 
 apiVersion: v1
 kind: ConfigMap
@@ -23,11 +22,6 @@ data:
         watch:
           type: Namespaces
           namespaces:
-{{- if eq .Values.watch.mode "Namespaces" }}
           - {{ $sysNS }}
-          - {{ $dpNS }}
-{{- else }}
-{{- fail "watch.mode NamespaceSelector not yet wired; set watch.mode=Namespaces" }}
-{{- end }}
     extensionApis:
       enableEnvoyPatchPolicy: true

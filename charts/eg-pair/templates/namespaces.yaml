@@ -10,12 +10,3 @@ metadata:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {{ include "eg-pair.dataplaneNamespace" . }}
-  labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    eg-pair: {{ .Values.pair.index | quote }}
-    eg-role: dataplane

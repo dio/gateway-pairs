@@ -3,13 +3,45 @@
 ## Multi-pair model
 
 One Helm release of `eg-pair` = one isolated controller+dataplane pair.
-Each pair uses three namespaces with distinct purposes:
+Each pair uses two namespaces:
 
 ```
-tr-release-{i}    Helm release Secret only. No workloads. Created by --create-namespace.
-tr-system-{i}     EG controller, config, RBAC, Gateway API resources.
-tr-dataplane-{i}  Generated Envoy proxy Deployment + Service (created by EG controller).
+tr-release-{i}    Helm release Secret only. No workloads.
+tr-system-{i}     Everything: EG controller, proxy, Gateway, tenant HTTPRoutes.
 ```
+
+In GatewayNamespace mode EG places the generated proxy Deployment in the
+Gateway's namespace. The Gateway is declared in `tr-system-{i}`, so the proxy
+lands there alongside the controller. Tenants deploy HTTPRoutes in the same
+namespace (Gateway `allowedRoutes: from: Same`).
+
+There is no separate dataplane namespace. The `tr-dataplane-{i}` concept was
+a naming mistake -- it implied isolation that doesn't exist with
+`from: Same` routing. The system namespace IS the tenant namespace for
+each pair.
+
+Resources by scope:
+
+| Resource | Scope | Created by |
+|---|---|---|
+| Namespace `tr-release-{i}` | cluster | Helm `--create-namespace` |
+| Namespace `tr-system-{i}` | cluster | chart pre-install hook |
+| `GatewayClass tr-{i}` | cluster | chart template |
+| `ClusterRole eg-pair-{i}-tokenreviews` | cluster | chart template |
+| `ClusterRoleBinding eg-pair-{i}-tokenreviews` | cluster | chart template |
+| `ClusterRole eg-pair-{i}-gateway-controller` | cluster | chart template |
+| `ClusterRoleBinding eg-pair-{i}-gateway-controller` | cluster | chart template |
+| `ServiceAccount envoy-gateway` | tr-system-{i} | chart template |
+| EG controller `Deployment envoy-gateway` | tr-system-{i} | chart template |
+| `Service envoy-gateway` | tr-system-{i} | chart template |
+| `ConfigMap envoy-gateway-config` | tr-system-{i} | chart template |
+| `EnvoyProxy eg` | tr-system-{i} | chart template |
+| `Gateway eg` | tr-system-{i} | chart template |
+| `Role infra-manager` | tr-system-{i} | chart template |
+| `RoleBinding infra-manager` | tr-system-{i} | chart template |
+| Envoy proxy `Deployment` | tr-system-{i} | EG controller (generated) |
+| Envoy proxy `Service` | tr-system-{i} | EG controller (generated) |
+| `HTTPRoute` | tr-system-{i} | **tenant-managed** |
 
 Resources by scope:
 

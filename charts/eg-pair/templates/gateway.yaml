@@ -1,5 +1,4 @@
 {{- $sysNS := include "eg-pair.systemNamespace" . }}
-{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
 {{- $gcName := include "eg-pair.gatewayClassName" . }}
 
 apiVersion: gateway.networking.k8s.io/v1
@@ -19,10 +18,9 @@ spec:
     protocol: {{ .protocol }}
     allowedRoutes:
       namespaces:
-        # 'Selector' permits HTTPRoutes from tr-dataplane-{i} to attach here.
-        # kubernetes.io/metadata.name is auto-set by k8s on every namespace.
-        from: Selector
-        selector:
-          matchLabels:
-            kubernetes.io/metadata.name: {{ $dpNS }}
+        # Same: HTTPRoutes must be in the same namespace as the Gateway
+        # (tr-system-{i}). This is where tenants deploy their routes.
+        # In GatewayNamespace mode EG places the proxy in the Gateway's
+        # namespace, so tr-system-{i} holds controller + proxy + routes.
+        from: Same
   {{- end }}

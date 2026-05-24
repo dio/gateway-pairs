@@ -49,7 +49,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 		exec.Command("k3d", "cluster", "delete", clusterName).Run() //nolint:errcheck -- ignore if absent
 		s.mustRun(
 			"k3d", "cluster", "create", clusterName,
-			"--agents", "0",
+			"--agents", "1",
 			"--image", k3sImage,
 			"--k3s-arg", "--disable=traefik@server:*",
 			"--k3s-arg", "--kubelet-arg=allowed-unsafe-sysctls=net.ipv4.ip_unprivileged_port_start@server:*",
@@ -72,7 +72,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 		// indefinitely. Delete all three namespaces for each pair unconditionally.
 		for i := 1; i <= 3; i++ {
 			n := namesFor(i)
-			for _, ns := range []string{n.ReleaseNS, n.SystemNS, n.DataplaneNS} {
+			for _, ns := range []string{n.ReleaseNS, n.SystemNS} {
 				exec.Command("kubectl", "--context", ktx, //nolint:errcheck
 					"delete", "namespace", ns, "--ignore-not-found", "--wait=false",
 				).Run()
@@ -82,7 +82,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 		deadline := time.Now().Add(2 * time.Minute)
 		for _, i := range []int{1, 2, 3} {
 			n := namesFor(i)
-			for _, ns := range []string{n.ReleaseNS, n.SystemNS, n.DataplaneNS} {
+			for _, ns := range []string{n.ReleaseNS, n.SystemNS} {
 				ns := ns
 				for time.Now().Before(deadline) {
 					out, err := s.kubectl("get", "namespace", ns)
@@ -148,8 +148,11 @@ func (s *pairsBaseSuite) mustHelm(args ...string) string {
 
 func (s *pairsBaseSuite) waitNodeReady() {
 	s.T().Helper()
-	node := fmt.Sprintf("nodes/k3d-%s-server-0", clusterName)
-	s.mustKubectl("wait", node, "--for=condition=Ready", "--timeout=120s")
+	s.mustKubectl("wait", fmt.Sprintf("nodes/k3d-%s-server-0", clusterName),
+		"--for=condition=Ready", "--timeout=120s")
+	// Agent node -- present when --agents 1 is used.
+	s.mustKubectl("wait", fmt.Sprintf("nodes/k3d-%s-agent-0", clusterName),
+		"--for=condition=Ready", "--timeout=120s")
 }
 
 func (s *pairsBaseSuite) chartPath(chart string) string {

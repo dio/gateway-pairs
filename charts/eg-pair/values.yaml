@@ -43,15 +43,9 @@ controller:
   # Enable only if you have a single pair and need zone-aware proxy spreading.
   topologyInjector: false
 
-# Watch mode for Gateway Namespace mode.
-# Namespaces: explicit list (narrower RBAC, good for static N).
-# NamespaceSelector: dynamic label-based discovery (ClusterRole required).
-watch:
-  mode: Namespaces   # Namespaces | NamespaceSelector
-  namespaceSelector: {}  # used only when mode: NamespaceSelector
-
-# Gateway resource deployed into the system namespace.
-# Tenants attach HTTPRoutes from the dataplane namespace via allowedRoutes.
+# RBAC switches. Normally both true.
+# Gateway resource deployed in the system namespace.
+# Tenants deploy HTTPRoutes in the same namespace (tr-system-{i}).
 gateway:
   name: eg
   listeners:

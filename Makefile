@@ -74,14 +74,16 @@ helm-lint:
 	helm lint ./charts/eg-crds
 	helm lint ./charts/eg-pair
 
-## cluster: create k3d cluster
+## cluster: create k3d cluster (1 server + 1 agent for resource headroom)
 cluster:
 	k3d cluster create $(CLUSTER) \
-	  --agents 0 \
+	  --agents 1 \
 	  --image rancher/k3s:v1.32.2-k3s1 \
 	  --k3s-arg --disable=traefik@server:* \
 	  --k3s-arg "--kubelet-arg=allowed-unsafe-sysctls=net.ipv4.ip_unprivileged_port_start@server:*"
 	kubectl --context $(KTX) wait nodes/k3d-$(CLUSTER)-server-0 \
+	  --for=condition=Ready --timeout=120s
+	kubectl --context $(KTX) wait nodes/k3d-$(CLUSTER)-agent-0 \
 	  --for=condition=Ready --timeout=120s
 
 ## cluster-delete: delete k3d cluster
@@ -107,10 +109,22 @@ pair-install:
 pair-delete:
 	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n $(RELEASE_NS) || true
 
+## e2e-remote: run e2e on dio@mini (offloads cluster resource usage from laptop)
+## Commits + pushes any local changes first so mini always has the latest code.
+e2e-remote:
+	@echo "==> syncing local changes to origin"
+	git add -A && git diff --cached --quiet || git commit -m "wip: sync for remote e2e"
+	git push
+	@echo "==> running e2e on dio@mini"
+	ssh dio@mini 'export PATH="/opt/homebrew/bin:$$HOME/.orbstack/bin:$$PATH" && \
+	  cd ~/src/dio/gateway-pairs && \
+	  git pull --ff-only && \
+	  DOCKER_HOST=unix://$$HOME/.orbstack/run/docker.sock \
+	  PAIR_PREFIX=$(PAIR_PREFIX) \
+	  make e2e'
+
 ## e2e: run full e2e suite (PAIR_PREFIX=tr by default)
 e2e:
-	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) RUN_PAIRS_E2E=1 \
-	  go test -v -count=1 -tags=e2e -run TestGatewayPairs -timeout 15m ./...
 
 ## clean: remove build artifacts and generated CRDs
 clean:

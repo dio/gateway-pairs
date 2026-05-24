@@ -42,6 +42,10 @@ Examples (role = "system"):
 {{- define "eg-pair.dataplaneNamespace" -}}
 {{- list "dataplane" . | include "eg-pair.nameFor" -}}
 {{- end }}
+{{/* eg-pair.dataplaneNamespace is retained for backward compatibility but
+     is no longer used by the chart. In GatewayNamespace mode EG places the
+     proxy in the Gateway's namespace (tr-system-{i}), so there is no
+     separate dataplane namespace. */}}
 
 {{/*
 GatewayClass name: prefix + suffix only (no role fragment).
