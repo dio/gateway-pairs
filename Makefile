@@ -1,8 +1,18 @@
-EG_VERSION ?= v1.8.0
-VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-CLUSTER    ?= gw-pairs-e2e
-KTX         = k3d-$(CLUSTER)
-PAIR       ?= 1
+EG_VERSION   ?= v1.8.0
+VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+CLUSTER      ?= gw-pairs-e2e
+KTX           = k3d-$(CLUSTER)
+PAIR         ?= 1
+# PAIR_PREFIX controls all namespace and GatewayClass names.
+# Default: tr  →  tr-release-1, tr-system-1, tr-dataplane-1, GatewayClass tr-1
+# Override: PAIR_PREFIX=tars make pair-install  →  tars-release-1, tars-system-1, ...
+# Set PAIR_PREFIX="" to drop the prefix entirely: release-1, system-1, etc.
+PAIR_PREFIX  ?= tr
+
+# Derived names from PAIR_PREFIX + PAIR. Mirror _helpers.tpl logic.
+_SEP         := $(if $(PAIR_PREFIX),-)
+RELEASE_NS    = $(PAIR_PREFIX)$(_SEP)release-$(PAIR)
+SYSTEM_NS     = $(PAIR_PREFIX)$(_SEP)system-$(PAIR)
 
 BIN = bin/gwp
 
@@ -82,23 +92,25 @@ cluster-delete:
 crds-install:
 	KTX=$(KTX) EG_VERSION=$(EG_VERSION) ./hack/install-crds.sh
 
-## pair-install: install one eg-pair release (PAIR=1 by default)
+## pair-install: install one eg-pair release (PAIR=1, PAIR_PREFIX=tr by default)
 pair-install:
 	helm --kube-context $(KTX) upgrade --install eg-pair-$(PAIR) ./charts/eg-pair \
-	  --namespace tr-release-$(PAIR) --create-namespace \
+	  --namespace $(RELEASE_NS) --create-namespace \
 	  --set pair.index=$(PAIR) \
+	  --set pair.namePrefix=$(PAIR_PREFIX) \
 	  --skip-crds \
 	  --wait --timeout 120s
 	kubectl --context $(KTX) rollout status deployment/envoy-gateway \
-	  -n tr-system-$(PAIR) --timeout=120s
+	  -n $(SYSTEM_NS) --timeout=120s
 
-## pair-delete: delete one eg-pair release (PAIR=1 by default)
+## pair-delete: delete one eg-pair release (PAIR=1, PAIR_PREFIX=tr by default)
 pair-delete:
-	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n tr-release-$(PAIR) || true
+	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n $(RELEASE_NS) || true
 
-## e2e: run full e2e suite
+## e2e: run full e2e suite (PAIR_PREFIX=tr by default)
 e2e:
-	cd e2e && RUN_PAIRS_E2E=1 go test -v -count=1 -tags=e2e -run TestGatewayPairs -timeout 15m ./...
+	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) RUN_PAIRS_E2E=1 \
+	  go test -v -count=1 -tags=e2e -run TestGatewayPairs -timeout 15m ./...
 
 ## clean: remove build artifacts and generated CRDs
 clean:

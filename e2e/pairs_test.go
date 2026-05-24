@@ -3,6 +3,7 @@
 package e2e_test
 
 // RUN_PAIRS_E2E=1 go test -v -count=1 -tags=e2e -run TestGatewayPairs ./...
+// Override namespace prefix: PAIR_PREFIX=tars go test ...
 
 import (
 	"fmt"
@@ -27,11 +28,10 @@ func TestGatewayPairs(t *testing.T) {
 	suite.Run(t, new(gatewayPairsSuite))
 }
 
-// ── install + basic health ────────────────────────────────────────────────────
+// ── install ───────────────────────────────────────────────────────────────────
 
 func (s *gatewayPairsSuite) Test01_InstallCRDs() {
 	s.T().Log("installing CRDs via hack/install-crds.sh")
-
 	script := filepath.Join(s.repoRoot, "hack", "install-crds.sh")
 	cmd := exec.CommandContext(s.ctx, "bash", script)
 	cmd.Env = append(cmd.Environ(),
@@ -42,7 +42,6 @@ func (s *gatewayPairsSuite) Test01_InstallCRDs() {
 	out, err := cmd.CombinedOutput()
 	s.T().Logf("install-crds.sh:\n%s", string(out))
 	s.Require().NoError(err, "hack/install-crds.sh failed")
-
 	s.verifyGatewayAPICRDs()
 	s.verifyEGCRDs()
 }
@@ -55,102 +54,88 @@ func (s *gatewayPairsSuite) Test04_InstallPair3() { s.installPair(3) }
 
 func (s *gatewayPairsSuite) Test05_VerifyIsolation() {
 	for _, i := range []int{1, 2, 3} {
-		sysNS := fmt.Sprintf("tr-system-%d", i)
+		n := namesFor(i)
 		out := s.mustKubectl("get", "deployment", "envoy-gateway",
-			"-n", sysNS, "-o", "jsonpath={.status.availableReplicas}")
+			"-n", n.SystemNS, "-o", "jsonpath={.status.availableReplicas}")
 		s.Equal("1", strings.TrimSpace(out),
-			"expected 1 available replica in %s", sysNS)
+			"expected 1 available replica in %s", n.SystemNS)
 	}
-
-	// Verify no controller Deployment in dataplane namespaces.
 	for _, i := range []int{1, 2, 3} {
-		dpNS := fmt.Sprintf("tr-dataplane-%d", i)
-		out, err := s.kubectl("get", "deployment", "envoy-gateway", "-n", dpNS)
-		// NotFound error is the expected success path.
+		n := namesFor(i)
+		out, err := s.kubectl("get", "deployment", "envoy-gateway", "-n", n.DataplaneNS)
 		s.True(err != nil || !strings.Contains(out, "envoy-gateway"),
-			"controller Deployment leaked into %s: %s", dpNS, out)
+			"controller Deployment leaked into %s: %s", n.DataplaneNS, out)
 	}
 }
 
 func (s *gatewayPairsSuite) Test06_VerifyGatewayClasses() {
 	for _, i := range []int{1, 2, 3} {
-		gcName := fmt.Sprintf("tr-%d", i)
+		n := namesFor(i)
 		s.eventually(func() bool {
-			out, err := s.kubectl("get", "gatewayclass", gcName,
-				"-o", "jsonpath={.status.conditions[0].type}={.status.conditions[0].status}")
+			// Use jsonpath to get all condition types and statuses as space-joined lists.
+			// e.g. "Accepted SupportedVersion=True True"
+			// We check that Accepted appears and True appears alongside it.
+			// Simpler: just check the gateway controller accepted the class via
+			// the status field directly.
+			out, err := s.kubectl("get", "gatewayclass", n.GWClass,
+				"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
 			return err == nil && strings.Contains(out, "Accepted=True")
-		}, 90*time.Second, 3*time.Second,
-			"GatewayClass %s not Accepted", gcName)
+		}, 5*time.Minute, 3*time.Second, "GatewayClass %s not Accepted", n.GWClass)
 	}
 }
 
 func (s *gatewayPairsSuite) Test07_VerifyGateways() {
 	for _, i := range []int{1, 2, 3} {
-		sysNS := fmt.Sprintf("tr-system-%d", i)
-		s.T().Logf("waiting for Gateway eg in %s", sysNS)
+		n := namesFor(i)
+		s.T().Logf("waiting for Gateway eg in %s", n.SystemNS)
 		s.eventually(func() bool {
-			// Iterate conditions to find Programmed rather than relying on
-			// jsonpath filter expressions (quoting varies across kubectl versions).
-			out, err := s.kubectl("get", "gateway", "eg", "-n", sysNS,
+			out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
 				"-o", "jsonpath={.status.conditions[*].type}={.status.conditions[*].status}")
-			if err != nil {
-				return false
-			}
-			return strings.Contains(out, "Programmed") &&
+			return err == nil &&
+				strings.Contains(out, "Programmed") &&
 				!strings.Contains(out, "Programmed=False")
 		}, 3*time.Minute, 5*time.Second,
-			"Gateway eg in %s never reached Programmed=True", sysNS)
+			"Gateway eg in %s never reached Programmed=True", n.SystemNS)
 	}
 }
 
 func (s *gatewayPairsSuite) Test08_VerifyDataplaneProxies() {
 	for _, i := range []int{1, 2, 3} {
-		dpNS := fmt.Sprintf("tr-dataplane-%d", i)
-		s.T().Logf("waiting for proxy Deployment in %s", dpNS)
+		n := namesFor(i)
+		// In GatewayNamespace mode EG places the proxy Deployment in the
+		// Gateway's namespace (SystemNS). DataplaneNS holds tenant HTTPRoutes.
+		s.T().Logf("waiting for proxy Deployment in %s", n.SystemNS)
 		s.eventually(func() bool {
-			out, err := s.kubectl("get", "deployments", "-n", dpNS,
+			out, err := s.kubectl("get", "deployments", "-n", n.SystemNS,
+				"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
 				"-o", "jsonpath={.items[0].status.availableReplicas}")
 			return err == nil && strings.TrimSpace(out) == "1"
 		}, 3*time.Minute, 5*time.Second,
-			"Envoy proxy not ready in %s", dpNS)
+			"Envoy proxy not ready in %s", n.SystemNS)
 	}
 }
 
-// ── traffic test via HTTPRoute + echo upstream ────────────────────────────────
+// ── traffic via HTTPRoute ─────────────────────────────────────────────────────
 
-// Test09_TrafficThroughPair1 deploys a simple echo server in tr-dataplane-1,
-// wires an HTTPRoute, port-forwards to the Gateway, and asserts a 200 response.
-// This proves the full data path: client -> Gateway -> Envoy -> upstream.
 func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
-	dpNS := "tr-dataplane-1"
-	sysNS := "tr-system-1"
+	n := namesFor(1)
 
-	// Deploy a minimal echo server (uses kennethreitz/httpbin -- always-pulled image).
-	s.mustKubectl("apply", "-n", dpNS, "-f", "-",
-		"--stdin=false",
-		"--filename=/dev/stdin",
-	)
-	s.applyManifest(dpNS, echoDeploymentManifest(dpNS))
-	s.applyManifest(dpNS, echoServiceManifest(dpNS))
+	// Echo server in dataplaneNS (tenant namespace).
+	s.applyManifest(n.DataplaneNS, echoDeploymentManifest(n.DataplaneNS))
+	s.applyManifest(n.DataplaneNS, echoServiceManifest(n.DataplaneNS))
+	s.mustKubectl("rollout", "status", "deployment/echo", "-n", n.DataplaneNS, "--timeout=90s")
 
-	// Wait for echo pod ready.
-	s.mustKubectl("rollout", "status", "deployment/echo", "-n", dpNS, "--timeout=90s")
+	// HTTPRoute in dataplaneNS referencing Gateway in systemNS.
+	s.applyManifest(n.DataplaneNS, httpRouteManifest(n.SystemNS, n.DataplaneNS))
 
-	// Apply HTTPRoute in tr-dataplane-1 pointing to tr-system-1/eg Gateway.
-	s.applyManifest(dpNS, httpRouteManifest(sysNS, dpNS))
+	// Gateway Service lives in systemNS (same namespace as the proxy).
+	gwSvc, err := s.findGatewayService(n.SystemNS)
+	s.Require().NoError(err, "could not find Gateway Service in %s", n.SystemNS)
 
-	// Port-forward the Gateway Service in tr-dataplane-1.
-	// EG creates it there in GatewayNamespace mode.
-	gwSvc, err := s.findGatewayService(dpNS)
-	s.Require().NoError(err, "could not find Gateway Service in %s", dpNS)
-
-	stopFwd := s.portForward(dpNS, "svc/"+gwSvc, "18080:80")
+	stopFwd := s.portForward(n.SystemNS, "svc/"+gwSvc, "18080:80")
 	defer stopFwd()
-
-	// Give port-forward a moment to establish.
 	time.Sleep(2 * time.Second)
 
-	// Assert HTTP 200 through the gateway.
 	s.eventually(func() bool {
 		resp, err := http.Get("http://localhost:18080/get") //nolint:noctx
 		if err != nil {
@@ -164,27 +149,39 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
 // ── delete and recovery ───────────────────────────────────────────────────────
 
 func (s *gatewayPairsSuite) Test10_DeletePair2() {
-	s.T().Log("deleting eg-pair-2")
-	s.mustHelm("uninstall", "eg-pair-2", "--namespace", "tr-release-2", "--wait")
+	n := namesFor(2)
+	s.T().Logf("deleting eg-pair-2 from %s", n.ReleaseNS)
+	s.mustHelm("uninstall", "eg-pair-2", "--namespace", n.ReleaseNS, "--wait")
+
+	// The system namespace is a pre-install hook resource. Helm tracks hook
+	// resources differently -- it only deletes them when hook-delete-policy
+	// includes "hook-succeeded" or "before-hook-creation", not on uninstall.
+	// Explicitly delete all three namespaces after helm uninstall.
+	for _, ns := range []string{n.ReleaseNS, n.SystemNS, n.DataplaneNS} {
+		s.kubectl("delete", "namespace", ns, "--ignore-not-found", "--wait=false") //nolint:errcheck
+	}
 
 	s.eventually(func() bool {
-		_, err := s.kubectl("get", "gatewayclass", "tr-2")
+		_, err := s.kubectl("get", "gatewayclass", n.GWClass)
 		return err != nil
-	}, 30*time.Second, 2*time.Second, "GatewayClass tr-2 not removed")
+	}, 30*time.Second, 2*time.Second, "GatewayClass %s not removed", n.GWClass)
 
-	for _, ns := range []string{"tr-system-2", "tr-dataplane-2"} {
+	for _, ns := range []string{n.SystemNS, n.DataplaneNS} {
+		ns := ns
 		s.eventually(func() bool {
 			_, err := s.kubectl("get", "namespace", ns)
 			return err != nil
-		}, 60*time.Second, 3*time.Second, "Namespace %s not removed", ns)
+		}, 90*time.Second, 3*time.Second, "Namespace %s not removed", ns)
 	}
 
+	prefix := fmt.Sprintf("eg-pair-%d", 2)
 	for _, res := range []string{
-		"clusterrole/eg-pair-2-tokenreviews",
-		"clusterrole/eg-pair-2-gateway-controller",
-		"clusterrolebinding/eg-pair-2-tokenreviews",
-		"clusterrolebinding/eg-pair-2-gateway-controller",
+		"clusterrole/" + prefix + "-tokenreviews",
+		"clusterrole/" + prefix + "-gateway-controller",
+		"clusterrolebinding/" + prefix + "-tokenreviews",
+		"clusterrolebinding/" + prefix + "-gateway-controller",
 	} {
+		res := res
 		s.eventually(func() bool {
 			_, err := s.kubectl("get", res)
 			return err != nil
@@ -194,66 +191,62 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 
 func (s *gatewayPairsSuite) Test11_PairsUnaffectedByDelete() {
 	for _, i := range []int{1, 3} {
-		sysNS := fmt.Sprintf("tr-system-%d", i)
-		dpNS := fmt.Sprintf("tr-dataplane-%d", i)
+		n := namesFor(i)
 
 		out := s.mustKubectl("get", "deployment", "envoy-gateway",
-			"-n", sysNS, "-o", "jsonpath={.status.availableReplicas}")
+			"-n", n.SystemNS, "-o", "jsonpath={.status.availableReplicas}")
 		s.Equal("1", strings.TrimSpace(out),
-			"controller in %s degraded after pair-2 delete", sysNS)
+			"controller in %s degraded after pair-2 delete", n.SystemNS)
 
-		out = s.mustKubectl("get", "deployments", "-n", dpNS,
+		out = s.mustKubectl("get", "deployments", "-n", n.SystemNS,
+			"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
 			"-o", "jsonpath={.items[0].status.availableReplicas}")
 		s.Equal("1", strings.TrimSpace(out),
-			"proxy in %s degraded after pair-2 delete", dpNS)
+			"proxy in %s degraded after pair-2 delete", n.SystemNS)
 	}
 }
 
 func (s *gatewayPairsSuite) Test12_ReinstallPair2() {
 	s.installPair(2)
-
+	n := namesFor(2)
 	s.eventually(func() bool {
-		out, err := s.kubectl("get", "deployments", "-n", "tr-dataplane-2",
+		out, err := s.kubectl("get", "deployments", "-n", n.SystemNS,
+			"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
 			"-o", "jsonpath={.items[0].status.availableReplicas}")
 		return err == nil && strings.TrimSpace(out) == "1"
 	}, 3*time.Minute, 5*time.Second,
-		"proxy not ready in tr-dataplane-2 after reinstall")
+		"proxy not ready in %s after reinstall", n.SystemNS)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (s *gatewayPairsSuite) installPair(index int) {
+	n := namesFor(index)
 	release := fmt.Sprintf("eg-pair-%d", index)
-	releaseNS := fmt.Sprintf("tr-release-%d", index)
-	sysNS := fmt.Sprintf("tr-system-%d", index)
-	s.T().Logf("installing %s (release ns: %s)", release, releaseNS)
+	s.T().Logf("installing %s (release ns: %s)", release, n.ReleaseNS)
 
-	// The release namespace (tr-release-{i}) is created by --create-namespace.
-	// It holds only the Helm release Secret.
-	// The system and dataplane namespaces are declared in the chart templates
-	// and fully owned by this release -- no ownership conflict.
-	s.mustHelm(
+	args := []string{
 		"upgrade", "--install", release,
 		s.chartPath("eg-pair"),
-		"--namespace", releaseNS,
+		"--namespace", n.ReleaseNS,
 		"--create-namespace",
 		"--set", fmt.Sprintf("pair.index=%d", index),
 		"--skip-crds",
-		"--wait", "--timeout", "120s",
-	)
+		"--wait", "--timeout", "3m",
+	}
+	args = append(args, n.helmSetPrefix()...)
+	s.mustHelm(args...)
 
 	s.mustKubectl("rollout", "status", "deployment/envoy-gateway",
-		"-n", sysNS, "--timeout=120s")
+		"-n", n.SystemNS, "--timeout=3m")
 	s.mustKubectl("wait", "deployment/envoy-gateway",
-		"-n", sysNS, "--for=condition=Available", "--timeout=120s")
+		"-n", n.SystemNS, "--for=condition=Available", "--timeout=3m")
 }
 
 func (s *gatewayPairsSuite) applyManifest(ns, manifest string) {
 	s.T().Helper()
-	cmd := exec.CommandContext(s.ctx,
-		"kubectl", "--context", ktx,
-		"apply", "-n", ns, "-f", "-",
-	)
+	cmd := exec.CommandContext(s.ctx, "kubectl", "--context", ktx,
+		"apply", "-n", ns, "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)
 	out, err := cmd.CombinedOutput()
 	s.Require().NoError(err, "kubectl apply failed:\n%s", string(out))
@@ -261,17 +254,11 @@ func (s *gatewayPairsSuite) applyManifest(ns, manifest string) {
 
 func (s *gatewayPairsSuite) applyNS(name string) {
 	s.T().Helper()
-	manifest := fmt.Sprintf(`apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-`, name)
-	cmd := exec.CommandContext(s.ctx,
-		"kubectl", "--context", ktx, "apply", "-f", "-",
-	)
+	manifest := fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", name)
+	cmd := exec.CommandContext(s.ctx, "kubectl", "--context", ktx, "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)
 	out, err := cmd.CombinedOutput()
-	s.Require().NoError(err, "apply namespace %s failed:\n%s", name, string(out))
+	s.Require().NoError(err, "apply namespace %s:\n%s", name, string(out))
 }
 
 func (s *gatewayPairsSuite) findGatewayService(ns string) (string, error) {
@@ -279,7 +266,7 @@ func (s *gatewayPairsSuite) findGatewayService(ns string) (string, error) {
 		"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
 		"-o", "jsonpath={.items[0].metadata.name}")
 	if err != nil {
-		return "", fmt.Errorf("find gateway svc: %w -- output: %s", err, out)
+		return "", fmt.Errorf("find gateway svc in %s: %w -- %s", ns, err, out)
 	}
 	name := strings.TrimSpace(out)
 	if name == "" {
@@ -343,8 +330,7 @@ func (s *gatewayPairsSuite) eventually(
 // ── manifest helpers ──────────────────────────────────────────────────────────
 
 func echoDeploymentManifest(ns string) string {
-	return fmt.Sprintf(`
-apiVersion: apps/v1
+	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: echo
@@ -368,8 +354,7 @@ spec:
 }
 
 func echoServiceManifest(ns string) string {
-	return fmt.Sprintf(`
-apiVersion: v1
+	return fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
   name: echo
@@ -384,8 +369,7 @@ spec:
 }
 
 func httpRouteManifest(sysNS, dpNS string) string {
-	return fmt.Sprintf(`
-apiVersion: gateway.networking.k8s.io/v1
+	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: echo

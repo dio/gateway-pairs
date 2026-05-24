@@ -57,22 +57,33 @@ func (s *pairsBaseSuite) SetupSuite() {
 		s.T().Log("k3d cluster ready")
 	} else {
 		s.T().Log("reusing existing cluster", clusterName)
-		// Uninstall any previous pair releases and wait for namespace
-		// termination. helm uninstall --wait does not block until chart-declared
-		// namespaces are fully gone, so we poll explicitly.
+		// Uninstall previous pair releases.
 		for i := 1; i <= 3; i++ {
-			releaseNS := fmt.Sprintf("tr-release-%d", i)
+			n := namesFor(i)
 			release := fmt.Sprintf("eg-pair-%d", i)
 			exec.Command("helm", "--kube-context", ktx, //nolint:errcheck
-				"uninstall", release, "--namespace", releaseNS, "--wait",
+				"uninstall", release, "--namespace", n.ReleaseNS,
 				"--ignore-not-found",
 			).Run()
 		}
-		// Wait for all pair namespaces to terminate.
+		// Explicitly delete all pair namespaces. The release namespace is created
+		// by --create-namespace and is NOT tracked by the Helm release, so
+		// helm uninstall never removes it. Polling for its termination would block
+		// indefinitely. Delete all three namespaces for each pair unconditionally.
+		for i := 1; i <= 3; i++ {
+			n := namesFor(i)
+			for _, ns := range []string{n.ReleaseNS, n.SystemNS, n.DataplaneNS} {
+				exec.Command("kubectl", "--context", ktx, //nolint:errcheck
+					"delete", "namespace", ns, "--ignore-not-found", "--wait=false",
+				).Run()
+			}
+		}
+		// Wait for all namespaces to terminate.
 		deadline := time.Now().Add(2 * time.Minute)
 		for _, i := range []int{1, 2, 3} {
-			for _, pfx := range []string{"tr-release", "tr-system", "tr-dataplane"} {
-				ns := fmt.Sprintf("%s-%d", pfx, i)
+			n := namesFor(i)
+			for _, ns := range []string{n.ReleaseNS, n.SystemNS, n.DataplaneNS} {
+				ns := ns
 				for time.Now().Before(deadline) {
 					out, err := s.kubectl("get", "namespace", ns)
 					if err != nil || !strings.Contains(out, ns) {
