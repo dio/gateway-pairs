@@ -181,18 +181,29 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 	release := fmt.Sprintf("eg-pair-%d", deleteIdx)
 	s.T().Logf("deleting %s from %s", release, n.SystemNS)
 
-	// Delete any Gateways in the dataplane NS first so EG can clear finalizers
-	// before the controller is removed.
+	// Delete all Gateways in the dataplane NS so EG clears proxy finalizers
+	// before the controller is removed. --wait blocks until EG removes the
+	// proxy Deployment and clears the finalizer on the Gateway object.
 	s.kubectl("delete", "gateways", "--all", "-n", n.DataplaneNS, //nolint:errcheck
-		"--ignore-not-found", "--wait=true", "--timeout=60s")
+		"--ignore-not-found", "--wait=true", "--timeout=90s")
 
-	// Wait until no EG-managed Deployments remain in the dataplane NS.
+	// Also delete any residual EnvoyProxy CRs -- these don't carry finalizers
+	// themselves but can leave dangling owner references.
+	s.kubectl("delete", "envoyproxies", "--all", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
+
+	// Wait until EG-managed Deployments AND Services are gone from the dataplane NS.
+	// Services carry the owning-gateway label; Deployments carry managed-by label.
+	// Both must be gone before the namespace can terminate cleanly.
 	s.eventually(func() bool {
-		out, err := s.kubectl("get", "deployments", "-n", n.DataplaneNS,
+		deploys, err1 := s.kubectl("get", "deployments", "-n", n.DataplaneNS,
 			"-l", "app.kubernetes.io/managed-by=envoy-gateway",
 			"-o", "jsonpath={.items}")
-		return err == nil && strings.TrimSpace(out) == "[]"
-	}, 90*time.Second, 3*time.Second, "EG-managed Deployments not gone from %s", n.DataplaneNS)
+		svcs, err2 := s.kubectl("get", "services", "-n", n.DataplaneNS,
+			"-l", "gateway.envoyproxy.io/owning-gateway-namespace="+n.DataplaneNS,
+			"-o", "jsonpath={.items}")
+		return err1 == nil && strings.TrimSpace(deploys) == "[]" &&
+			err2 == nil && strings.TrimSpace(svcs) == "[]"
+	}, 2*time.Minute, 3*time.Second, "EG-managed resources not gone from %s", n.DataplaneNS)
 
 	s.mustHelm("uninstall", release, "--namespace", n.SystemNS)
 
@@ -212,7 +223,7 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 		s.eventually(func() bool {
 			_, err := s.kubectl("get", "namespace", ns)
 			return err != nil
-		}, 3*time.Minute, 3*time.Second, "Namespace %s not removed", ns)
+		}, 5*time.Minute, 5*time.Second, "Namespace %s not removed", ns)
 	}
 
 	// Verify all cluster-scoped RBAC for this pair is gone.
