@@ -186,6 +186,18 @@ func (h *Harness) QuitProxyPods(ns string, baseLocalPort int) {
 			h.T.Logf("quitquitquit sent to %s: %s", pod, strings.TrimSpace(lastOut))
 		}
 	}
+
+	// Wait for all proxy pods to exit. After quitquitquit the Envoy process
+	// begins its drain; the shutdown-manager sidecar also needs to exit.
+	// We must wait here before namespace delete -- a pod still Terminating
+	// blocks namespace termination indefinitely.
+	h.eventuallyBool(func() bool {
+		out, err := h.Kubectl("get", "pods", "-n", ns,
+			"-l", "app.kubernetes.io/managed-by=envoy-gateway",
+			"-o", "jsonpath={.items}",
+			"--ignore-not-found")
+		return err == nil && strings.TrimSpace(out) == "[]"
+	}, 30*time.Second, 1*time.Second)
 }
 
 // WaitNS polls until all given namespaces are gone (max 2 minutes).

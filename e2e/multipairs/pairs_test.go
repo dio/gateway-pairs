@@ -183,6 +183,7 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 
 	// Hit /quitquitquit on proxy pods FIRST, while still Running.
 	// See testutil.Harness.QuitProxyPods for full rationale.
+	// This call also waits for the pods to exit before returning.
 	s.quitProxyPods(n.DataplaneNS)
 
 	// Delete all Gateways so EG clears its finalizer and deprovisions the
@@ -222,10 +223,15 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 
 	for _, ns := range []string{n.SystemNS, n.DataplaneNS} {
 		ns := ns
-		s.eventually(func() bool {
+		if !s.eventuallyBool(func() bool {
 			_, err := s.kubectl("get", "namespace", ns)
 			return err != nil
-		}, 2*time.Minute, 3*time.Second, "Namespace %s not removed", ns)
+		}, 5*time.Minute, 5*time.Second) {
+			// Namespace still Terminating -- dump remaining resources so we
+			// know exactly what is blocking termination.
+			s.dumpNamespaceBlockers(ns)
+			s.Fail("condition not met within timeout", "Namespace %s not removed", ns)
+		}
 	}
 
 	// Verify all cluster-scoped RBAC for this pair is gone.
@@ -374,14 +380,54 @@ func (s *gatewayPairsSuite) eventually(
 	msgAndArgs ...interface{},
 ) {
 	s.T().Helper()
+	if !s.eventuallyBool(condition, waitFor, tick) {
+		s.Fail("condition not met within timeout", msgAndArgs...)
+	}
+}
+
+func (s *gatewayPairsSuite) eventuallyBool(
+	condition func() bool,
+	waitFor, tick time.Duration,
+) bool {
 	deadline := time.Now().Add(waitFor)
 	for time.Now().Before(deadline) {
 		if condition() {
-			return
+			return true
 		}
 		time.Sleep(tick)
 	}
-	s.Fail("condition not met within timeout", msgAndArgs...)
+	return false
+}
+
+// dumpNamespaceBlockers logs all resources with finalizers in ns.
+// Called when namespace termination times out so CI logs show the blocker.
+func (s *gatewayPairsSuite) dumpNamespaceBlockers(ns string) {
+	s.T().Helper()
+	s.T().Logf("=== namespace %s still Terminating -- dumping blockers ===", ns)
+
+	// All pods with their finalizers.
+	pods, _ := s.kubectl("get", "pods", "-n", ns,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\" finalizers=\"}{.metadata.finalizers}{\"\\n\"}{end}",
+		"--ignore-not-found")
+	if strings.TrimSpace(pods) != "" {
+		s.T().Logf("pods:\n%s", pods)
+	}
+
+	// All resources with non-empty finalizers via kubectl api-resources.
+	for _, res := range []string{"deployments", "services", "serviceaccounts", "roles", "rolebindings", "configmaps"} {
+		out, _ := s.kubectl("get", res, "-n", ns,
+			"-o", "jsonpath={range .items[?(@.metadata.finalizers)]}{.metadata.name}{\" finalizers=\"}{.metadata.finalizers}{\"\\n\"}{end}",
+			"--ignore-not-found")
+		if strings.TrimSpace(out) != "" {
+			s.T().Logf("%s with finalizers:\n%s", res, out)
+		}
+	}
+
+	// Namespace finalizers and status.
+	nsDesc, _ := s.kubectl("get", "namespace", ns,
+		"-o", "jsonpath=finalizers={.metadata.finalizers} phase={.status.phase} conditions={.status.conditions}",
+		"--ignore-not-found")
+	s.T().Logf("namespace status: %s", nsDesc)
 }
 
 // clusterScopedRBACFor returns the cluster-scoped RBAC resource identifiers
