@@ -82,9 +82,8 @@ vet:
 	go vet ./...
 	cd e2e && go vet -tags=e2e ./...
 
-## helm-lint: lint both charts
+## helm-lint: lint the eg-pair chart
 helm-lint:
-	helm lint ./charts/eg-crds
 	helm lint ./charts/eg-pair
 
 ## cluster: create k3d cluster (1 server + 1 agent for resource headroom)
