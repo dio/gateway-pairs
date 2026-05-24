@@ -154,12 +154,25 @@ func (h *Harness) QuitProxyPods(ns string, baseLocalPort int) {
 				"--grace-period=0", "--force", "--ignore-not-found")
 			continue
 		}
-		// Give the tunnel a moment to establish.
-		time.Sleep(300 * time.Millisecond)
 
-		curl := exec.CommandContext(h.Ctx, "curl", "-s", "-X", "POST",
-			fmt.Sprintf("http://127.0.0.1:%d/quitquitquit", localPort))
-		out, curlErr := curl.CombinedOutput()
+		// Poll until the tunnel is ready (max 5s, 200ms between attempts).
+		// A fixed sleep is unreliable on loaded CI runners.
+		url := fmt.Sprintf("http://127.0.0.1:%d/quitquitquit", localPort)
+		var curlErr error
+		var out []byte
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			curl := exec.CommandContext(h.Ctx, "curl",
+				"-s", "-X", "POST",
+				"--connect-timeout", "1",
+				"--max-time", "2",
+				url)
+			out, curlErr = curl.CombinedOutput()
+			if curlErr == nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
 		fwd.Process.Kill() //nolint:errcheck
 		if curlErr != nil {
 			h.T.Logf("quitquitquit failed for %s (%v: %s) -- force-deleting",
