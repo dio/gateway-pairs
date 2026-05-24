@@ -763,3 +763,505 @@ Direct `helm install` is never used because Helm's 1 MB release Secret limit
 breaks on large CRD bundles. `gwp crds detect` inspects
 `managedFields[*].manager` to identify provider-managed installs and reports
 compatibility against the bundled Gateway API version.
+
+---
+
+## CLI design notes
+
+The sections below capture planned commands and design rationale that did not
+make it into v0.1.0. They define the intended direction for future releases.
+Implemented commands are documented in [docs/cli.md](cli.md).
+
+---
+
+## Why a CLI
+
+The Makefile + `hack/install-crds.sh` combination works for a developer on
+a single machine, but breaks down when:
+
+- The install order matters and is not enforced (CRDs before pairs, both
+  namespaces in the watch list before the controller starts).
+- A cluster has provider-managed Gateway API CRDs and the operator has to
+  manually detect whether to skip them or not.
+- N pairs are installed and you need a single-pane view of which are healthy,
+  which are stuck, and why.
+- CI needs a non-zero exit code when the cluster is not ready for the workload.
+- A new pair would conflict with an existing GatewayClass name or a Namespace
+  that was not created by Helm.
+
+`gwp` solves the detection and ordering problems, expresses them as clear
+error messages, and exposes the full install+verify lifecycle as composable
+subcommands.
+
+---
+
+
+---
+
+## Binary name and repo placement
+
+```
+gwp                     (short: gateway pairs)
+cmd/gwp/main.go         entry point
+internal/
+  kube/                 kube client, context validation
+  crd/                  CRD detection + install logic
+  pair/                 pair status, install, verify
+  preflight/            preflight check runners
+```
+
+Single statically-linked binary. No runtime dependencies beyond a valid
+kubeconfig and `helm` on PATH for the install subcommands. For the pure
+read/detect subcommands (`preflight`, `status`) only a kubeconfig is needed.
+
+---
+
+
+---
+
+## Planned subcommand tree
+
+```
+gwp
+  preflight             run all preflight checks before installing anything
+  crds
+    detect              show what Gateway API / EG CRDs exist and who manages them
+    install             apply CRDs with the right strategy for this cluster
+    status              show installed bundle versions and channels
+  pair
+    install <index>     install one pair (wraps helm, adds post-install verify)
+    status [index]      show health of one pair or all pairs (Layer 2 + Layer 3)
+    info <index>        print coupling fields for writing Layer 3 manifests
+    verify <index>      re-run post-install checks without reinstalling
+    delete <index>      uninstall a pair and clean up cluster-scoped resources
+    list                list all pairs detected in the cluster
+  charts
+    list                list embedded charts and bundled CRD versions
+    export              export embedded charts to a directory
+    show <chart>        print default values for an embedded chart
+  version               print gwp version
+```
+
+---
+
+
+---
+
+## gwp charts subcommand
+
+Exports the embedded charts to disk for operators who prefer direct Helm
+workflows or need to inspect, diff, or customize the templates.
+
+```
+gwp charts
+  list            list embedded charts with versions
+  export          export all charts to a directory
+  show <chart>    equivalent of: helm show values <chart>
+```
+
+### gwp charts list
+
+```
+$ gwp charts list
+
+CHART     VERSION  APP-VERSION
+eg-crds   0.1.0    v1.8.0
+eg-pair   0.1.0    v1.8.0
+
+Bundled CRDs:
+  Gateway API  v1.5.1  standard
+  Gateway API  v1.5.1  experimental
+  Envoy Gateway v1.8.0
+```
+
+### gwp charts export
+
+```
+$ gwp charts export --output-dir ./my-charts
+
+Exporting charts to ./my-charts/
+  wrote ./my-charts/eg-crds/
+  wrote ./my-charts/eg-pair/
+
+To install manually:
+  kubectl apply --server-side -f <(helm template ./my-charts/eg-crds)
+  helm upgrade --install eg-pair-1 ./my-charts/eg-pair \
+    --namespace tr-system-1 --create-namespace \
+    --set pair.index=1 --skip-crds
+```
+
+### gwp charts show
+
+```
+$ gwp charts show eg-pair
+
+# Default values for eg-pair.
+pair:
+  index: 1
+controller:
+  image:
+    repository: docker.io/envoyproxy/gateway
+    tag: v1.8.0
+...
+```
+
+Implemented as `helm show values <tmpdir/chart>` where `<tmpdir>` is the
+embedded chart extracted to a temp dir. Or, since `values.yaml` is a
+known file in the embedded FS, read it directly without shelling to Helm.
+
+---
+
+
+---
+
+## Air-gapped installs
+
+`gwp crds install` and `gwp pair install` both work without internet access:
+- CRD YAML is embedded and applied directly to the cluster
+- The `eg-pair` chart is extracted from the binary and passed to local Helm
+
+The only external dependency is the EG controller image
+(`docker.io/envoyproxy/gateway:v1.8.0`). In air-gapped environments, mirror
+that image to an internal registry and override:
+
+```bash
+gwp pair install 1 --set controller.image.repository=registry.internal/envoyproxy/gateway
+```
+
+---
+
+
+---
+
+## `gwp preflight`
+
+Runs a battery of checks before any install. Exits non-zero on the first
+blocking failure. Non-blocking warnings are printed but do not fail.
+
+Checks, in order:
+
+### 1. Context safety
+
+Reject any non-k3d context unless `--unsafe-context` is passed. Rationale:
+all e2e and dev flows use k3d clusters; a production operator should explicitly
+acknowledge they are targeting a real cluster.
+
+```
+[OK]   context: k3d-gw-pairs-e2e
+[WARN] context is not a k3d cluster; pass --unsafe-context to proceed
+```
+
+`--unsafe-context` sets a flag, does not suppress the warning.
+
+### 2. Server reachability + version
+
+```
+[OK]   server reachable: v1.32.2
+[FAIL] server unreachable: connection refused
+```
+
+Minimum server version: 1.28 (Gateway API v1 GA requires it).
+
+### 3. Current user RBAC
+
+Check whether the authenticated user (or ServiceAccount) has the permissions
+needed to install the charts. This is a dry-run SelfSubjectAccessReview for
+each of:
+
+- `namespaces` create (cluster-scoped)
+- `clusterroles` create
+- `clusterrolebindings` create
+- `roles` create in target namespaces
+- `rolebindings` create in target namespaces
+- `deployments` create in target namespaces
+
+```
+[OK]   can create namespaces
+[OK]   can create clusterroles
+[FAIL] cannot create clusterrolebindings: forbidden
+```
+
+### 4. Gateway API CRD detection
+
+Checks for `gateways.gateway.networking.k8s.io`. Reads the
+`gateway.networking.k8s.io/bundle-version` and
+`gateway.networking.k8s.io/channel` annotations, then inspects
+`managedFields[*].manager` for provider fingerprints.
+
+**Critical: `bundle-version` alone is not a provider-managed signal.**
+That annotation is written by ANY install path -- `kubectl apply`, `helm
+template`, GKE, AKS, everyone. Non-empty means "installed", nothing more.
+The real signal is the field manager name in `managedFields`.
+
+Known provider managers (checked by `gwp`):
+- `gke-networking-controller`, `gke-gateway-api` -- GKE Standard
+- `aks-gateway-api-controller` -- AKS
+- `addon-manager` -- GKE autopilot / addon-manager pattern
+
+Four outcomes:
+
+| State | Signal | Recommended action |
+|---|---|---|
+| Not installed | `bundle-version` absent | install with `gwp crds install` |
+| Self-managed, same channel | bundle-version present, known manager | skip (already correct) or `--force-gateway-api-crds` to upgrade |
+| Provider-managed | known provider manager in managedFields | auto-skip; `gwp crds install` installs only EG CRDs |
+| Channel mismatch | installed channel != requested channel | block: downgrading removes CRDs with live objects |
+
+```
+[OK]   gateway-api CRDs not installed -- will install (from gateway-crds-helm v1.8.0)
+[OK]   gateway-api CRDs v1.5.1 standard already installed -- skipping (--force-gateway-api-crds to upgrade)
+[WARN] gateway-api CRDs managed by gke-networking-controller (v1.5.1 standard) -- skipping
+[FAIL] gateway-api CRDs on experimental channel; requested standard
+       downgrading removes TCPRoute/BackendTLSPolicy CRDs -- check for live objects first
+       pass --allow-channel-downgrade to proceed (dangerous)
+```
+
+**Gateway API version is not a separate flag.** `gwp crds install` always
+installs the Gateway API version bundled by `gateway-crds-helm` at the
+requested `--eg-version`. This ensures the Gateway API and EG CRDs are
+always the co-tested pair. There is no `--gateway-api-version` flag.
+
+### 5. EG CRD detection
+
+Check for `envoyproxies.gateway.envoyproxy.io`. If missing, `gwp crds install`
+is required.
+
+```
+[OK]   envoy-gateway CRDs v1.8.0 installed
+[WARN] envoy-gateway CRDs not installed -- run: gwp crds install
+```
+
+### 6. Cluster-scoped resource conflicts (if `--pair <index>` passed)
+
+Cluster-scoped resources must be unique per pair. Two pairs sharing any of
+these will conflict silently or loudly depending on the resource type. `gwp`
+checks all of them before install.
+
+#### GatewayClass name
+
+`tr-{i}` must not exist unless it is owned by this Helm release. If it exists
+and belongs to another release (or was created out of band), installing will
+fail or produce a broken state where two controllers claim the same class.
+
+```
+[OK]   GatewayClass tr-1 not found
+[FAIL] GatewayClass tr-1 exists, owner: eg-pair-2 (different release)
+       Two controllers cannot share a GatewayClass name.
+       Options:
+         Choose a different pair index: gwp pair install --id 3
+         Remove the conflicting resource: kubectl delete gatewayclass tr-1
+```
+
+#### controllerName uniqueness
+
+Each EG controller uses a `controllerName` derived from its GatewayClass name
+(`gateway.envoyproxy.io/tr-{i}`). This value is baked into the
+`envoy-gateway-config` ConfigMap in the system namespace.
+
+If two controllers share a `controllerName`, each one watches all GatewayClasses
+cluster-wide and tries to reconcile GatewayClasses that belong to the other
+controller. Since each controller's cache only covers its own two namespaces,
+it cannot find the other pair's EnvoyProxy and logs continuously:
+
+```
+failed to find envoyproxy tr-system-2/eg for GatewayClass tr-2:
+unable to get: tr-system-2/eg because of unknown namespace for the cache
+```
+
+The scan: list all ConfigMaps named `envoy-gateway-config` across all
+namespaces and extract the `controllerName` field. This requires only
+`get configmap` across namespaces, which the kubeconfig user typically has.
+
+```
+[OK]   controllerName gateway.envoyproxy.io/tr-1 not in use by any other controller
+[FAIL] controllerName gateway.envoyproxy.io/tr-1 already in use
+       ConfigMap envoy-gateway-config in namespace tr-system-3 uses the same value.
+       This pair would conflict with the controller in tr-system-3.
+       Resolve by choosing a different pair id (--id 4) or removing the
+       conflicting pair first.
+```
+
+#### ClusterRole names
+
+`eg-pair-tr-{i}-tokenreviews` and `eg-pair-tr-{i}-gateway-controller` must not
+exist unless owned by this release. Stale ClusterRoles from a previously failed
+or force-deleted install indicate unclean state. They are not a hard block (RBAC
+is additive and the new install will overwrite them) but they signal that a
+previous uninstall did not clean up correctly.
+
+```
+[OK]   ClusterRole eg-pair-tr-1-tokenreviews not found
+[WARN] ClusterRole eg-pair-tr-1-tokenreviews exists without a matching Helm release
+       This is stale state from a previous install. The new install will overwrite it.
+       To clean up manually: kubectl delete clusterrole eg-pair-tr-1-tokenreviews
+```
+
+#### Summary table
+
+| Resource | Conflict type | Action on conflict |
+|---|---|---|
+| `GatewayClass tr-{i}` | Hard block | Different id or delete the existing resource |
+| `controllerName tr-{i}` | Hard block | Different id or remove the conflicting controller |
+| `ClusterRole eg-pair-tr-{i}-*` | Soft warn | New install overwrites; stale state only |
+| `ClusterRoleBinding eg-pair-tr-{i}-*` | Soft warn | Same |
+
+### 7. Namespace conflicts (if `--pair <index>` passed)
+
+Check if `tr-system-{i}` or `tr-dataplane-{i}` exist and are not Helm-managed.
+
+```
+[OK]   namespaces tr-system-1 and tr-dataplane-1 do not exist
+[WARN] namespace tr-system-1 exists -- will be adopted by Helm install
+[FAIL] namespace tr-system-1 exists and is not managed by eg-pair-1
+```
+
+### 8. Pair index uniqueness
+
+If `--pair <index>` is passed, check no other pair with the same index is
+already installed (i.e. no `eg-pair-{index}` Helm release in any namespace).
+
+```
+[OK]   no existing release eg-pair-1
+[FAIL] Helm release eg-pair-1 already installed in tr-system-1
+       use: gwp pair status 1   to inspect
+       use: gwp pair delete 1   to remove
+```
+
+### Full preflight output example
+
+```
+$ gwp preflight --pair 1
+
+Preflight checks for pair 1 on context k3d-gw-pairs-e2e
+-------------------------------------------------------
+[OK]   context: k3d-gw-pairs-e2e (k3d)
+[OK]   server reachable: v1.32.2
+[OK]   can create namespaces, clusterroles, clusterrolebindings
+[OK]   gateway-api CRDs not installed -- will install v1.5.1 (standard)
+[OK]   envoy-gateway CRDs not installed -- run: gwp crds install
+[OK]   GatewayClass tr-1 does not exist
+[OK]   namespaces tr-system-1, tr-dataplane-1 do not exist
+[OK]   no existing release eg-pair-1
+
+1 warning, 0 failures. Ready to install.
+
+  gwp crds install
+  gwp pair install 1
+```
+
+When all checks pass it prints the recommended next commands. Operators can
+copy-paste the output into a runbook.
+
+---
+
+
+---
+
+## `gwp pair verify <index>`
+
+Re-runs post-install checks without reinstalling. Useful after a manual fix
+to confirm the pair recovered.
+
+```
+$ gwp pair verify 1
+
+Verifying pair 1...
+  controller Available:    ok
+  GatewayClass Accepted:   ok
+  Gateway Programmed:      ok
+  proxy ready:             ok
+
+Pair 1 healthy.
+```
+
+With `--diagnose`, if anything is wrong it runs the diagnostic read sequence
+(ConfigMap watch list check, tokenreviews binding check, EG log tail).
+
+---
+
+
+---
+
+## Scenarios the CLI handles cleanly
+
+### Fresh k3d cluster, install two pairs
+
+```bash
+gwp preflight --pair 1
+gwp preflight --pair 2   # both pass
+gwp crds install
+gwp pair install 1
+gwp pair install 2
+gwp pair status
+```
+
+### GKE Standard with managed Gateway API
+
+```bash
+gwp crds detect
+# OUTPUT: gateway-api v1.2.0 standard -- provider-managed (skipping)
+
+gwp crds install
+# auto-skips Gateway API CRDs, installs only EG CRDs
+
+gwp pair install 1 --unsafe-context
+```
+
+### Upgrade EG version
+
+```bash
+gwp crds install --eg-version v1.9.0
+gwp pair install 1 --eg-version v1.9.0
+gwp pair install 2 --eg-version v1.9.0
+gwp pair status
+```
+
+### Diagnose a degraded pair
+
+```bash
+gwp pair status 3
+# shows Gateway Programmed=False
+
+gwp pair verify 3 --diagnose
+# reads ConfigMap, checks logs, prints root cause
+
+# after manual fix:
+gwp pair verify 3
+# confirms recovery
+```
+
+### CI pipeline (fail fast on unhealthy cluster)
+
+```bash
+gwp pair status --output json
+# exits 1 if any pair degraded; CI gate
+```
+
+### Orphan detection after partial teardown
+
+```bash
+gwp pair list
+# shows orphaned pair 4
+
+gwp pair delete 4
+# cleans up cluster-scoped resources even without a Helm release
+```
+
+---
+
+
+---
+
+## What the CLI is NOT
+
+- Not a Helm replacement. It calls Helm for installs and upgrades. The chart
+  is the source of truth for resource shapes; the CLI is orchestration and
+  observability on top.
+- Not a continuous reconciler or operator. It is a one-shot tool for humans
+  and CI pipelines.
+- Not a multi-cluster manager. It talks to one cluster per invocation (the
+  current kubeconfig context or `--context`).
+- Not responsible for HTTPRoute management. Routes are tenant-owned. The CLI
+  only surfaces Gateway and proxy readiness, not route attachment status.
+
+---
