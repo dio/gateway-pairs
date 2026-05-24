@@ -40,6 +40,9 @@ type Options struct {
 	// Suffix is an optional string override for the numeric index in all resource names
 	// (e.g. "prod" → tr-system-prod, GatewayClass tr-prod).
 	Suffix string
+	// UseSuffix must be true when Suffix should be used (even when Suffix is "").
+	// Distinguishes "no --suffix flag" (use numeric index) from "--no-suffix" (no suffix at all).
+	UseSuffix bool
 }
 
 // Client is the main entry point for embedding gwp operations.
@@ -122,6 +125,7 @@ func (c *Client) PairInstall(ctx context.Context, index int, opts PairInstallOpt
 	return pair.Install(ctx, c.helm, c.kube, index, pair.InstallOptions{
 		Prefix:      c.opts.Prefix,
 		Suffix:      c.opts.Suffix,
+		UseSuffix:   c.opts.UseSuffix,
 		ExtraSet:    opts.ExtraSet,
 		HelmTimeout: opts.HelmTimeout,
 		WaitTimeout: opts.WaitTimeout,
@@ -131,12 +135,12 @@ func (c *Client) PairInstall(ctx context.Context, index int, opts PairInstallOpt
 
 // PairDelete uninstalls pair index.
 func (c *Client) PairDelete(ctx context.Context, index int, out io.Writer) error {
-	return pair.Delete(ctx, c.helm, c.kube, index, c.opts.Prefix, c.opts.Suffix, out)
+	return pair.Delete(ctx, c.helm, c.kube, index, c.opts.Prefix, c.opts.Suffix, c.opts.UseSuffix, out)
 }
 
 // PairGet returns the status of a single installed pair.
 func (c *Client) PairGet(ctx context.Context, index int) (*PairStatus, error) {
-	return pair.Get(ctx, c.helm, c.kube, index, c.opts.Prefix, c.opts.Suffix)
+	return pair.Get(ctx, c.helm, c.kube, index, c.opts.Prefix, c.opts.Suffix, c.opts.UseSuffix)
 }
 
 // PairList returns the status of all installed pairs.
@@ -146,5 +150,5 @@ func (c *Client) PairList(ctx context.Context) ([]*PairStatus, error) {
 
 // PairInfo returns the coupling fields needed to write Layer 3 manifests for pair index.
 func (c *Client) PairInfo(index int) names.Pair {
-	return pair.Info(c.opts.Prefix, c.opts.Suffix, index)
+	return pair.Info(c.opts.Prefix, c.opts.Suffix, c.opts.UseSuffix, index)
 }

@@ -36,15 +36,23 @@ Gateway manifest. Everything else in `tr-dataplane-{i}` is operator-owned.
 
 ### Naming
 
-All names derive from `--prefix` (default `tr`) and pair index:
+All names derive from `--prefix` (default `tr`) and pair index. The full matrix:
 
-| Field | Default (prefix=tr, index=1) | Custom prefix (prefix=myapp, index=2) | No prefix (--no-prefix, index=1) |
+| flags | System NS | Dataplane NS | GatewayClass |
 |---|---|---|---|
-| Release name | `eg-pair-1` | `eg-pair-2` | `eg-pair-1` |
-| System namespace | `tr-system-1` | `myapp-system-2` | `system-1` |
-| Dataplane namespace | `tr-dataplane-1` | `myapp-dataplane-2` | `dataplane-1` |
-| GatewayClass | `tr-1` | `myapp-2` | `1` |
-| Controller name | `gateway.envoyproxy.io/tr-1` | `gateway.envoyproxy.io/myapp-2` | `gateway.envoyproxy.io/1` |
+| *(default, index=1)* | `tr-system-1` | `tr-dataplane-1` | `tr-1` |
+| `--prefix myapp` | `myapp-system-1` | `myapp-dataplane-1` | `myapp-1` |
+| `--no-prefix` | `system-1` | `dataplane-1` | `1` |
+| `--suffix prod` | `tr-system-prod` | `tr-dataplane-prod` | `tr-prod` |
+| `--no-suffix` | `tr-system` | `tr-dataplane` | `tr` |
+| `--no-prefix --no-suffix` | `system` | `dataplane` | *(empty)* |
+| `--no-prefix --suffix prod` | `system-prod` | `dataplane-prod` | `prod` |
+
+Use `--no-prefix` / `--no-suffix` rather than `--prefix ""` / `--suffix ""`
+to avoid shell quoting issues in Makefiles and CI scripts.
+
+`--no-suffix` is useful for single-pair deployments where numbering adds no value.
+`--no-prefix --no-suffix` is the bare minimum: just `system` and `dataplane`.
 
 The index suffix can also be replaced with a string. This works in both paths
 but the flag differs:

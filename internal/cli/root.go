@@ -37,6 +37,7 @@ var (
 	globalPrefix     string
 	globalNoPrefix   bool
 	globalSuffix     string
+	globalNoSuffix   bool
 	globalOutput     string
 )
 
@@ -60,6 +61,9 @@ func Execute(info BuildInfo) error {
 	root.PersistentFlags().StringVar(&globalSuffix, "suffix", "",
 		`string suffix override (e.g. "prod" → tr-system-prod, GatewayClass tr-prod). `+
 			`When set, replaces the numeric index in all names; use --suffix instead of an index.`)
+	root.PersistentFlags().BoolVar(&globalNoSuffix, "no-suffix", false,
+		`use no suffix: produces tr-system, tr-dataplane instead of tr-system-1, tr-dataplane-1. `+
+			`Useful for single-pair deployments where numbering is unnecessary.`)
 	root.PersistentFlags().StringVarP(&globalOutput, "output", "o", "text",
 		"output format: text or json")
 
@@ -79,12 +83,29 @@ func effectivePrefix() string {
 	return globalPrefix
 }
 
+// effectiveSuffix resolves the suffix to pass to names.For* and pair.*.
+// --no-suffix uses the special empty-string sentinel that names.ForSuffix
+// uses to produce no suffix at all (tr-system, not tr-system-1).
+// --suffix prod uses "prod" as the suffix string.
+// Default (neither flag): returns "" which signals pair.* to use the numeric index.
+func effectiveSuffix(index int) (suffix string, useSuffix bool) {
+	if globalNoSuffix {
+		return "", true // ForSuffix("tr", "") → tr-system, tr-dataplane, tr
+	}
+	if globalSuffix != "" {
+		return globalSuffix, true
+	}
+	return "", false // use numeric index
+}
+
 func apiClient() *gwpapi.Client {
+	sfx, useSuffix := effectiveSuffix(0)
 	return gwpapi.New(gwpapi.Options{
 		KubeContext: globalContext,
 		Kubeconfig:  globalKubeconfig,
 		Prefix:      effectivePrefix(),
-		Suffix:      globalSuffix,
+		Suffix:      sfx,
+		UseSuffix:   useSuffix,
 	})
 }
 
@@ -189,8 +210,9 @@ func newCRDsInstallCmd() *cobra.Command {
 // When --suffix is set, the numeric index is used only for the Helm release
 // ordering; all resource names derive from the suffix string instead.
 func pairNames(index int) names.Pair {
-	if globalSuffix != "" {
-		return names.ForSuffix(effectivePrefix(), globalSuffix)
+	sfx, useSuffix := effectiveSuffix(index)
+	if useSuffix {
+		return names.ForSuffix(effectivePrefix(), sfx)
 	}
 	return names.For(effectivePrefix(), index)
 }
@@ -350,7 +372,8 @@ func newPairInfoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n := pair.Info(effectivePrefix(), globalSuffix, index)
+			sfx, useSuffix := effectiveSuffix(index)
+			n := pair.Info(effectivePrefix(), sfx, useSuffix, index)
 			return emit(cmd.OutOrStdout(), n, func(w io.Writer) {
 				fmt.Fprintf(w, "Pair %d:\n", index)
 				fmt.Fprintf(w, "  gatewayClassName:    %s\n", n.GatewayClass)

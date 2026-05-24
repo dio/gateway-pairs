@@ -46,21 +46,52 @@ func ForSuffix(prefix, suffix string) Pair {
 }
 
 func forInternal(prefix, idStr string, index int, suffix string) Pair {
-	sep := ""
-	if prefix != "" {
-		sep = "-"
+	// joinParts joins non-empty strings with "-".
+	// joinParts("tr", "system") → "tr-system"
+	// joinParts("",   "system") → "system"
+	// joinParts("tr", "")       → "tr"
+	// joinParts("",   "")       → ""
+
+	// idFrag is the trailing part after the role word: "-1", "-prod", or "".
+	idFrag := ""
+	if idStr != "" {
+		idFrag = "-" + idStr
 	}
-	gc := fmt.Sprintf("%s%s%s", prefix, sep, idStr)
-	release := "eg-pair-" + idStr
+
+	// release uses the idStr when present; falls back to numeric index for
+	// --no-suffix where idStr is "" but we still need a unique release name.
+	release := "eg-pair-"
+	if idStr != "" {
+		release += idStr
+	} else {
+		release += fmt.Sprintf("%d", index)
+	}
+
+	gc := joinParts(prefix, idStr)
+
 	return Pair{
 		Prefix:         prefix,
 		Index:          index,
 		Suffix:         suffix,
-		SystemNS:       fmt.Sprintf("%s%ssystem-%s", prefix, sep, idStr),
-		DataplaneNS:    fmt.Sprintf("%s%sdataplane-%s", prefix, sep, idStr),
+		SystemNS:       joinParts(prefix, "system") + idFrag,
+		DataplaneNS:    joinParts(prefix, "dataplane") + idFrag,
 		GatewayClass:   gc,
 		ControllerName: "gateway.envoyproxy.io/" + gc,
 		ReleaseName:    release,
+	}
+}
+
+// joinParts joins two strings with "-", omitting the separator when either is empty.
+func joinParts(a, b string) string {
+	switch {
+	case a == "" && b == "":
+		return ""
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + "-" + b
 	}
 }
 
