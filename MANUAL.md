@@ -183,8 +183,8 @@ namespaces. Deleting or upgrading one pair has no effect on others.
 ### 7. Upgrade a pair to a new EG version
 
 `gwp pair install` uses `helm upgrade --install`, so re-running it upgrades an
-existing pair in place. A new `gwp` binary ships with the updated chart and CRDs
-embedded. The upgrade path is:
+existing pair in place. It will not error with "already exists". A new `gwp`
+binary ships with the updated chart and CRDs embedded. The upgrade path is:
 
 ```bash
 # 1. Install the new gwp binary (e.g. brew upgrade gwp or replace the binary).
