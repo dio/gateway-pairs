@@ -140,10 +140,26 @@ func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index i
 	return nil
 }
 
-// Delete uninstalls an eg-pair Helm release after ensuring Gateways are removed.
-// Callers should delete all Gateways in the dataplane namespace before calling
-// Delete; this function verifies that no EG-managed Deployments remain before
-// proceeding so that proxy finalizers do not block namespace termination.
+// Delete uninstalls an eg-pair Helm release using the correct teardown sequence:
+//
+//  1. Delete all Gateways in the dataplane NS with --wait so EG deprovisions
+//     the proxy Deployment and clears its ownerRef before the controller exits.
+//  2. Wait for all EG-managed Deployments and Services to be gone.
+//  3. helm uninstall (removes controller, ClusterRoles, both namespaces).
+//  4. Delete both namespaces explicitly -- helm uninstall does not always remove
+//     the release namespace in all Helm versions.
+//
+// Skipping step 1 leaves proxy pod finalizers uncleared. The namespace then
+// hangs in Terminating indefinitely because the controller that could clear
+// them is gone.
+//
+// Note on termination speed: EG sets terminationGracePeriodSeconds =
+// drainTimeout + 300s (default 360s). In production clusters with live
+// connections this is intentional. In CI or when you control the EnvoyProxy,
+// set spec.shutdown.drainTimeout: "1s" to reduce the grace period to 301s.
+// For immediate exit with no live connections, POST /quitquitquit to the
+// Envoy admin API (127.0.0.1:19000) via kubectl port-forward before deleting
+// the Gateway -- see e2e/testutil.Harness.QuitProxyPods for the implementation.
 func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix string, out io.Writer) error {
 	if prefix == "" {
 		prefix = "tr"
@@ -153,25 +169,43 @@ func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index in
 	}
 	n := names.For(prefix, index)
 
-	// Warn if EG-managed Deployments still exist (proxy finalizers will block NS termination).
-	deployments, _ := kubeClient.Output(ctx,
-		"get", "deployments", "-n", n.DataplaneNS,
-		"-l", "app.kubernetes.io/managed-by=envoy-gateway",
-		"-o", "jsonpath={.items[*].metadata.name}",
-		"--ignore-not-found")
-	if strings.TrimSpace(deployments) != "" {
-		fmt.Fprintf(out, "[WARN] EG-managed Deployments still exist in %s: %s\n", n.DataplaneNS, deployments)
-		fmt.Fprintf(out, "       Delete all Gateways first to clear proxy finalizers:\n")
-		fmt.Fprintf(out, "       kubectl delete gateways --all -n %s --wait=true\n\n", n.DataplaneNS)
+	// Step 1: Delete all Gateways so EG deprovisions proxies before the
+	// controller is removed. --wait blocks until EG removes the Deployment
+	// and clears the finalizer on the Gateway object.
+	fmt.Fprintf(out, "Deleting Gateways in %s (waiting for proxy deprovision)...\n", n.DataplaneNS)
+	kubeClient.Output(ctx, "delete", "gateways", "--all", "-n", n.DataplaneNS, //nolint:errcheck
+		"--ignore-not-found", "--wait=true", "--timeout=2m")
+	kubeClient.Output(ctx, "delete", "envoyproxies", "--all", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
+
+	// Step 2: Wait for EG-managed Deployments and Services to be gone.
+	// The Deployment deletion is the signal that EG has fully deprovisioned
+	// the proxy. Services are GC'd via ownerRef shortly after.
+	fmt.Fprintf(out, "Waiting for proxy resources to be removed from %s...\n", n.DataplaneNS)
+	deadline := time.Now().Add(3 * time.Minute)
+	for time.Now().Before(deadline) {
+		deploys, _ := kubeClient.Output(ctx,
+			"get", "deployments", "-n", n.DataplaneNS,
+			"-l", "app.kubernetes.io/managed-by=envoy-gateway",
+			"-o", "jsonpath={.items}", "--ignore-not-found")
+		svcs, _ := kubeClient.Output(ctx,
+			"get", "services", "-n", n.DataplaneNS,
+			"-l", "gateway.envoyproxy.io/owning-gateway-namespace="+n.DataplaneNS,
+			"-o", "jsonpath={.items}", "--ignore-not-found")
+		d := strings.TrimSpace(deploys)
+		s := strings.TrimSpace(svcs)
+		if (d == "[]" || d == "") && (s == "[]" || s == "") {
+			break
+		}
+		time.Sleep(3 * time.Second)
 	}
 
+	// Step 3: helm uninstall.
 	fmt.Fprintf(out, "Uninstalling %s from %s...\n", n.ReleaseName, n.SystemNS)
 	if err := helmClient.Run(ctx, out, os.Stderr, "uninstall", n.ReleaseName, "--namespace", n.SystemNS); err != nil {
 		return fmt.Errorf("helm uninstall %s: %w", n.ReleaseName, err)
 	}
 
-	// Delete both namespaces -- helm uninstall does not always remove the
-	// release namespace in all Helm versions.
+	// Step 4: Delete both namespaces explicitly.
 	for _, ns := range []string{n.SystemNS, n.DataplaneNS} {
 		kubeClient.Output(ctx, "delete", "namespace", ns, "--ignore-not-found", "--wait=false") //nolint:errcheck
 	}

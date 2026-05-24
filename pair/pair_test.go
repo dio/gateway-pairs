@@ -117,27 +117,25 @@ func TestInfo_derivesCorrectNames(t *testing.T) {
 	}
 }
 
-func TestDelete_warnsOnStaleProxies(t *testing.T) {
+func TestDelete_waitsForProxyGone(t *testing.T) {
 	h := &fake.Helm{}
-	k := &fake.Kubectl{
-		Responses: map[string]string{
-			"managed-by=envoy-gateway": "some-proxy-deploy",
-		},
-	}
+	// Fake returns empty for all queries -- simulates proxies already gone.
+	// The poll loop should exit immediately on the first check.
+	k := &fake.Kubectl{}
 	var out strings.Builder
-	// Delete will proceed even with warning; helm.Run returns nil
 	err := pair.Delete(context.Background(), h, k, 1, "tr", &out)
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if !strings.Contains(out.String(), "WARN") {
-		t.Errorf("expected WARN in output, got: %s", out.String())
+	// Should have called helm uninstall and printed Done.
+	if !strings.Contains(out.String(), "Uninstalling") {
+		t.Errorf("expected uninstall output, got: %s", out.String())
 	}
 }
 
 func TestDelete_cleanNamespace(t *testing.T) {
 	h := &fake.Helm{}
-	k := &fake.Kubectl{} // no stale proxies
+	k := &fake.Kubectl{} // empty responses -- clean state
 	var out strings.Builder
 	err := pair.Delete(context.Background(), h, k, 2, "tr", &out)
 	if err != nil {

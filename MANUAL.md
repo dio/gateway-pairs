@@ -165,17 +165,72 @@ namespaces. Deleting or upgrading one pair has no effect on others.
 
 ### 8. Uninstall a pair
 
-Gateway finalizers must be cleared before the controller is removed. If you
-delete the controller first, the proxy pod finalizer can never be cleared and
-the namespace hangs in `Terminating` indefinitely.
+`gwp pair delete` handles the full teardown sequence:
 
 ```bash
-# 1. Delete all Gateways so EG clears proxy finalizers while the controller is live
-kubectl delete gateways --all -n tr-dataplane-1 --wait=true --timeout=60s
-
-# 2. Uninstall via gwp (warns if EG-managed Deployments still exist)
 gwp pair delete 1
 ```
+
+**What it does internally:**
+
+1. Deletes all Gateways in `tr-dataplane-{i}` with `--wait` so EG deprovisions
+   the proxy Deployment before the controller exits.
+2. Waits until EG-managed Deployments and Services are gone.
+3. `helm uninstall` -- removes the controller, ClusterRoles, both namespaces.
+4. Deletes both namespaces explicitly.
+
+**Why the sequence matters:**
+
+Proxy pods have no Kubernetes finalizers -- they use ownerReferences. But
+`terminationGracePeriodSeconds` defaults to 360s (EG formula: `drainTimeout + 300s`).
+Deleting the controller before the pod exits leaves the pod Terminating with nothing
+to cancel its grace period. The namespace then blocks for up to 6 minutes.
+
+Deleting the Gateway first lets EG remove the Deployment cleanly. Once the
+Deployment is gone, any remaining pod is just waiting out its grace period.
+
+**For fast teardown (no live connections):**
+
+POST `/quitquitquit` to the Envoy admin API before calling `gwp pair delete`.
+This triggers an immediate graceful shutdown -- the pod exits as soon as the
+connection drain completes, which is instant with no live traffic.
+
+The admin API listens on `127.0.0.1:19000` (localhost-only). EG uses distroless
+images (no shell), so `kubectl exec` won't work. Use port-forward:
+
+```bash
+# Find a Running proxy pod
+PROXY_POD=$(kubectl get pods -n tr-dataplane-1 \
+  -l app.kubernetes.io/managed-by=envoy-gateway \
+  --field-selector=status.phase=Running \
+  -o jsonpath='{.items[0].metadata.name}')
+
+# Port-forward and send /quitquitquit
+kubectl port-forward -n tr-dataplane-1 pod/$PROXY_POD 19000:19000 &
+FWD_PID=$!
+# Poll until tunnel is ready (CI runners can be slow to bind)
+until curl -s -X POST --connect-timeout 1 http://127.0.0.1:19000/quitquitquit; do
+  sleep 0.2
+done
+kill $FWD_PID
+
+# Wait for pod to exit, then delete the pair
+kubectl wait pod/$PROXY_POD -n tr-dataplane-1 --for=delete --timeout=30s
+gwp pair delete 1
+```
+
+Must be called **before** `gwp pair delete` / Gateway deletion -- port-forward to
+a Terminating pod is unreliable once SIGTERM is delivered.
+
+**Alternative: reduce drainTimeout in EnvoyProxy:**
+
+```yaml
+spec:
+  shutdown:
+    drainTimeout: "1s"   # terminationGracePeriodSeconds = 301s (not 360s)
+```
+
+Useful when `/quitquitquit` is impractical, but still 5 minutes minimum.
 
 ---
 
@@ -246,17 +301,25 @@ and `gwp pair install` both compute and inject them automatically.
 ### 4. Uninstall a pair
 
 ```bash
-# 1. Delete Gateways first (EG clears proxy finalizers)
-kubectl delete gateways --all -n tr-dataplane-1 --wait=true --timeout=60s
+# 1. Delete Gateways first so EG deprovisions the proxy Deployment cleanly.
+#    --wait blocks until EG removes the Deployment and clears ownerRefs.
+kubectl delete gateways --all -n tr-dataplane-1 --wait=true --timeout=2m
+kubectl delete envoyproxies --all -n tr-dataplane-1 --ignore-not-found
 
-# 2. Wait for proxy Deployments to be gone
+# 2. Wait for EG-managed Deployments and Services to be gone.
 kubectl wait deployment \
-  -l gateway.envoyproxy.io/owning-gateway-name \
-  -n tr-dataplane-1 --for=delete --timeout=60s
+  -l app.kubernetes.io/managed-by=envoy-gateway \
+  -n tr-dataplane-1 --for=delete --timeout=2m
 
-# 3. Uninstall the Helm release
+# 3. Uninstall the Helm release (removes controller, ClusterRoles, both namespaces).
 helm uninstall eg-pair-1 -n tr-system-1
+
+# 4. Delete both namespaces explicitly (helm uninstall may not remove the release NS).
+kubectl delete namespace tr-system-1 tr-dataplane-1 --ignore-not-found --wait=false
 ```
+
+For fast teardown with no live connections, send `/quitquitquit` to each proxy pod
+before step 1 -- see [CLI path section 8](#8-uninstall-a-pair) for the script.
 
 ---
 
