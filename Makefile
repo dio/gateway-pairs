@@ -21,8 +21,8 @@ BIN = bin/gwp
 
 all: build
 
-## build: build gwp binary (requires generate-crds first)
-build: generate-crds
+## build: build gwp binary (requires generate-crds and subchart fetch first)
+build: generate-crds dep-update
 	go build \
 	  -ldflags="-s -w \
 	    -X main.version=$(VERSION) \
@@ -30,6 +30,10 @@ build: generate-crds
 	    -X main.commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo none) \
 	    -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 	  -o $(BIN) ./cmd/gwp
+
+## dep-update: fetch Helm subchart dependencies
+dep-update:
+	helm dependency update ./charts/eg-pair
 
 ## generate-crds: pre-render CRD YAML from gateway-crds-helm into charts/crds/
 generate-crds:

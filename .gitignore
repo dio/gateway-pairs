@@ -7,8 +7,12 @@ bin/
 dist/
 
 # Generated CRD YAML (produced by make generate-crds, not committed)
-# charts/crds/.gitkeep IS committed so go:embed resolves on clean checkout.
 charts/crds/*.yaml
+
+# Subchart tarballs (fetched by helm dependency update, not committed)
+charts/eg-pair/charts/
+
+
 
 
 # Go workspace sum (generated)

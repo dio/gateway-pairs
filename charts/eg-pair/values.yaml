@@ -59,12 +59,25 @@ envoyProxy:
   create: false
   name: eg
 
-# RBAC switches. Normally both true.
+# RBAC. Only the infra-manager extension is managed here.
+# tokenreviews and the cluster-scoped gateway-controller RBAC are owned by
+# the gateway-helm subchart.
 rbac:
-  # Cluster-scoped tokenreviews/create required for JWT-based xDS auth.
-  tokenreviews: true
-  # Namespace-scoped infra-manager Role in the dataplane namespace.
+  # Namespace-scoped infra-manager Role in system and dataplane namespaces.
+  # EG needs this to create proxy resources in both namespaces.
   infraManager: true
-  # If non-empty, skip creating the ClusterRole and bind to this existing one.
-  # Useful when multiple pairs share a single shared tokenreviews ClusterRole.
-  sharedTokenreviewsClusterRole: ""
+
+# Values passed to the gateway-helm subchart.
+# Static defaults -- the same for every pair.
+# Per-pair values (controllerName, watch.namespaces) are injected by
+# gwp pair install at install time via --set flags.
+gateway-helm:
+  config:
+    envoyGateway:
+      provider:
+        type: Kubernetes
+        kubernetes:
+          deploy:
+            type: GatewayNamespace
+  topologyInjector:
+    enabled: false

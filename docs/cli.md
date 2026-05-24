@@ -756,38 +756,74 @@ CRDs ready. Run: gwp pair install 1
 
 ## `gwp pair install <index>`
 
-Wraps `helm upgrade --install eg-pair-{i}`, then runs post-install verification
-(equivalent to e2e tests 04-07 but as a blocking CLI command). Exits non-zero
-if verification fails within the timeout.
+Wraps `helm upgrade --install eg-pair-{i}`, then runs post-install verification.
+Exits non-zero if verification fails within the timeout.
 
-Flags:
+### What `gwp pair install` computes
+
+The chart depends on `gateway-helm` as a subchart. Two values cannot be static
+chart defaults because they are unique per pair. `gwp pair install` derives them
+from the pair identity and passes them as `--set` flags to Helm automatically.
+
+**`controllerName`** (derived from GatewayClass name, unique per pair):
+
+```
+gateway.envoyproxy.io/{prefix}-{id}
+```
+
+Without uniqueness, controllers fight over each other's GatewayClasses across
+the cluster. See the controller isolation section in `docs/design.md`.
+
+**`watch.namespaces`** (the pair's two namespaces):
+
+```
+[{prefix}-system-{id}, {prefix}-dataplane-{id}]
+```
+
+The controller must watch both to read its own TLS secret (system NS) and to
+manage Gateways, EnvoyProxies, and proxy resources (dataplane NS).
+
+The full Helm invocation `gwp pair install 1` produces:
+
+```
+helm upgrade --install eg-pair-1 <chart> \
+  --namespace tr-system-1 --create-namespace \
+  --set "gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-1" \
+  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces" \
+  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-1,tr-dataplane-1}" \
+  --skip-crds
+```
+
+All other `gateway-helm` values (`deploy.type: GatewayNamespace`,
+`topologyInjector.enabled: false`) are static defaults in `eg-pair/values.yaml`
+and need no per-install override.
+
+### Flags
+
 - `--timeout 3m` -- total verification timeout (default: 3m)
-- `--chart ./charts/eg-pair` -- override chart source; accepts a local path or any OCI ref.
-  Default: `oci://ghcr.io/dio/gateway-pairs/charts/eg-pair:<version>` (bundled version).
-  When omitted, gwp extracts the embedded chart to a temp dir -- no network access needed.
+- `--chart ./charts/eg-pair` -- override chart source; accepts a local path or OCI ref.
+  Default: embedded chart extracted to a temp dir; no network access needed.
 - `--eg-version v1.8.0` -- controller image tag
-- `--dry-run` -- render and validate manifests without applying; see dry-run section below
+- `--dry-run` -- render and validate manifests without applying
 - `--set key=value` -- passed through to helm
 
 ```
 $ gwp pair install 1
 
 Installing eg-pair-1 into tr-system-1...
-  helm upgrade --install eg-pair-1 ... --wait --timeout 120s
 
 Waiting for controller (tr-system-1/envoy-gateway) to be Available...  ok (23s)
-Waiting for GatewayClass tr-1 to be Accepted...                        ok (1s)
-Waiting for Gateway eg/tr-system-1 to be Programmed...                 ok (47s)
-Waiting for Envoy proxy Deployment in tr-dataplane-1...                 ok (52s)
+Waiting for GatewayClass tr-1 to be Accepted...                        ok (2s)
 
-Pair 1 ready.
+Pair 1 ready. Apply Layer 3 resources:
 
-  system namespace:    tr-system-1
-  dataplane namespace: tr-dataplane-1
-  gateway class:       tr-1
-  gateway:             tr-system-1/eg  (Programmed)
-  proxy deployment:    tr-dataplane-1/envoy-<generated>  (1/1 ready)
+  kubectl apply -n tr-dataplane-1 -f envoyproxies.yaml
+  kubectl apply -n tr-dataplane-1 -f gateways.yaml     # gatewayClassName: tr-1
+  kubectl apply -n tr-dataplane-1 -f httproutes.yaml
+
+  gwp pair info 1   for the exact values needed in your Gateway manifests.
 ```
+
 
 If Gateway gets stuck at Accepted-but-not-Programmed (the watch list failure
 mode), `gwp` detects it, reads the ConfigMap, and prints a diagnostic:

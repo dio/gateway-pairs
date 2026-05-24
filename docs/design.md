@@ -495,21 +495,83 @@ Both `tr-system-1` and `tr-dataplane-1` terminate cleanly after this sequence.
 
 ---
 
-## Planned: subchart migration
+## Subchart migration (in progress)
 
-Add `gateway-helm` as a Helm subchart dependency. All required values are
-settable as plain `--set` flags (confirmed against v1.8.0):
+`eg-pair` depends on `gateway-helm` as a Helm subchart. This means certgen,
+RBAC, the controller Deployment, Service, and ServiceAccount are all owned and
+maintained by upstream. When EG releases a new version, bumping `EG_VERSION`
+and running `helm dependency update` is the entire upgrade path for the
+controller layer.
+
+`eg-pair` adds on top:
+
+- The two-namespace declarations (`tr-system-{i}`, `tr-dataplane-{i}`)
+- `GatewayClass tr-{i}` with unique `controllerName`
+- The infra-manager RBAC extension (beyond what upstream provides)
+- Optional default `EnvoyProxy` + `Gateway` (`create: false` by default)
+
+### Values the chart sets statically
+
+These are the same for every pair and go in `eg-pair/values.yaml` as
+subchart overrides under the `gateway-helm:` key:
+
+```yaml
+gateway-helm:
+  config:
+    envoyGateway:
+      provider:
+        type: Kubernetes
+        kubernetes:
+          deploy:
+            type: GatewayNamespace  # always -- this is the whole point
+  topologyInjector:
+    enabled: false                  # always off in multi-pair (N webhooks interfere)
+```
+
+### Values the CLI computes and injects at install time
+
+Two values cannot be expressed as static defaults because they are unique per
+pair and derived from the pair's identity:
+
+**`controllerName`** is derived from the GatewayClass name:
+```
+gateway.envoyproxy.io/{prefix}-{id}    e.g. gateway.envoyproxy.io/tr-1
+```
+
+**`watch.namespaces`** is the pair's two namespaces:
+```
+[{prefix}-system-{id}, {prefix}-dataplane-{id}]    e.g. [tr-system-1, tr-dataplane-1]
+```
+
+`gwp pair install` computes both from the pair's `--id` (or `--index`) and
+`--prefix` flags, then passes them as `--set` flags to Helm:
 
 ```
-config.envoyGateway.gateway.controllerName           ✓
-config.envoyGateway.provider.kubernetes.deploy.type  ✓
-config.envoyGateway.provider.kubernetes.watch.*      ✓
-topologyInjector.enabled                             ✓
+--set "gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-1"
+--set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces"
+--set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-1,tr-dataplane-1}"
 ```
 
-`eg-pair` becomes a thin wrapper: passes these values to `gateway-helm` and
-adds namespace declarations, GatewayClass, and the default single-tier scaffold.
-RBAC, certgen, and the controller Deployment are maintained by upstream.
+These are the only required inputs beyond the pair identity. All other
+`gateway-helm` values are either static defaults in `eg-pair/values.yaml` or
+upstream defaults. The CLI is the orchestration layer; the chart is the
+declaration layer.
+
+Confirmed against `gateway-helm v1.8.0`:
+
+```
+config.envoyGateway.gateway.controllerName           ✓ values key, plain string
+config.envoyGateway.provider.kubernetes.deploy.type  ✓ values key
+config.envoyGateway.provider.kubernetes.watch.*      ✓ values key, list accepted
+topologyInjector.enabled                             ✓ values key
+```
+
+### What `eg-crds` was
+
+`eg-crds` was a local chart that created only a version-tracking ConfigMap.
+It never installed CRDs. CRD installation is now handled entirely by
+`gwp crds install`, which pulls from the upstream `gateway-crds-helm` chart.
+The `eg-crds` chart has been removed.
 
 ---
 

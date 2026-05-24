@@ -2,10 +2,14 @@ apiVersion: v2
 name: eg-pair
 description: >
   One Envoy Gateway controller+dataplane pair. Deploy one release per pair.
-  Requires eg-crds to be installed first.
+  Requires CRDs installed via gwp crds install first.
+  Depends on gateway-helm for the EG controller; eg-pair adds the
+  two-namespace model, GatewayClass, and infra-manager RBAC extension.
 type: application
-# version is injected at release time: helm package --version $RELEASE_VERSION
-# Do not bump this manually.
 version: 0.0.0-dev
-# appVersion tracks the bundled EG version, also injected at release time.
 appVersion: "0.0.0-dev"
+
+dependencies:
+- name: gateway-helm
+  version: "v1.8.0"
+  repository: "oci://docker.io/envoyproxy"

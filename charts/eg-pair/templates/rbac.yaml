@@ -2,51 +2,17 @@
 {{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
 {{- $prefix := include "eg-pair.prefix" . }}
 
-{{/* tokenreviews ClusterRole */}}
-{{- if and .Values.rbac.tokenreviews (not .Values.rbac.sharedTokenreviewsClusterRole) }}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ $prefix }}-tokenreviews
-  labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    eg-pair: {{ .Values.pair.index | quote }}
-rules:
-- apiGroups: ["authentication.k8s.io"]
-  resources: ["tokenreviews"]
-  verbs: ["create"]
----
-{{- end }}
+{{/*
+infra-manager Role in BOTH system and dataplane namespaces.
 
-{{/* tokenreviews ClusterRoleBinding */}}
-{{- if .Values.rbac.tokenreviews }}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ $prefix }}-tokenreviews
-  labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    eg-pair: {{ .Values.pair.index | quote }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  {{- if .Values.rbac.sharedTokenreviewsClusterRole }}
-  name: {{ .Values.rbac.sharedTokenreviewsClusterRole }}
-  {{- else }}
-  name: {{ $prefix }}-tokenreviews
-  {{- end }}
-subjects:
-- kind: ServiceAccount
-  name: envoy-gateway
-  namespace: {{ $sysNS }}
----
-{{- end }}
+upstream gateway-helm provides tokenreviews and the cluster-scoped gateway-controller
+RBAC. This file adds the namespace-scoped infra-manager Role which grants the
+controller permissions to create/manage proxy resources in the pair's namespaces.
 
-{{/* infra-manager Role in BOTH system and dataplane namespaces.
-     System NS: EG creates the proxy ServiceAccount here.
-     Dataplane NS: EG creates proxy Deployment, Service here
-     (GatewayNamespace mode puts proxy in the Gateway's namespace = dpNS). */}}
-{{- if .Values.rbac.infraManager }}
+System NS: EG creates the proxy ServiceAccount here.
+Dataplane NS: EG creates proxy Deployment, Service, ConfigMap here
+  (GatewayNamespace mode puts proxy in the Gateway's namespace = dataplaneNS).
+*/}}
 {{- $infraRules := list
   (dict "apiGroups" (list "") "resources" (list "serviceaccounts" "services" "configmaps") "verbs" (list "create" "get" "list" "watch" "delete" "deletecollection" "patch" "update"))
   (dict "apiGroups" (list "apps") "resources" (list "deployments" "daemonsets") "verbs" (list "create" "get" "list" "watch" "delete" "deletecollection" "patch" "update"))
@@ -55,6 +21,7 @@ subjects:
   (dict "apiGroups" (list "certificates.k8s.io") "resources" (list "clustertrustbundles") "verbs" (list "get" "list" "watch"))
 }}
 {{- range $ns := list $sysNS $dpNS }}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -82,6 +49,4 @@ subjects:
 - kind: ServiceAccount
   name: envoy-gateway
   namespace: {{ $sysNS }}
----
-{{- end }}
 {{- end }}
