@@ -142,12 +142,26 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
 func (s *gatewayPairsSuite) Test10_DeletePair2() {
 	n := namesFor(2)
 	s.T().Logf("deleting eg-pair-2 from %s", n.ReleaseNS)
-	s.mustHelm("uninstall", "eg-pair-2", "--namespace", n.ReleaseNS, "--wait")
 
-	// The system namespace is a pre-install hook resource. Helm tracks hook
-	// resources differently -- it only deletes them when hook-delete-policy
-	// includes "hook-succeeded" or "before-hook-creation", not on uninstall.
-	// Explicitly delete all three namespaces after helm uninstall.
+	// Delete the Gateway first so EG deprovisions the proxy Deployment and
+	// removes its finalizer before we remove the controller. Without this the
+	// namespace gets stuck Terminating because the proxy finalizer can't be
+	// cleared by the (already-deleted) controller.
+	s.kubectl("delete", "gateway", "eg", "-n", n.SystemNS, //nolint:errcheck
+		"--ignore-not-found", "--wait=true", "--timeout=60s")
+
+	// Wait for proxy to be gone before uninstalling.
+	s.eventually(func() bool {
+		out, err := s.kubectl("get", "deployments", "-n", n.SystemNS,
+			"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
+			"--ignore-not-found")
+		return err == nil && !strings.Contains(out, "eg")
+	}, 90*time.Second, 3*time.Second, "proxy Deployment not removed after Gateway delete")
+
+	s.mustHelm("uninstall", "eg-pair-2", "--namespace", n.ReleaseNS)
+
+	// Delete namespaces explicitly -- the system NS is a hook resource
+	// not tracked for helm uninstall deletion.
 	for _, ns := range []string{n.ReleaseNS, n.SystemNS} {
 		s.kubectl("delete", "namespace", ns, "--ignore-not-found", "--wait=false") //nolint:errcheck
 	}
@@ -157,13 +171,10 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 		return err != nil
 	}, 30*time.Second, 2*time.Second, "GatewayClass %s not removed", n.GWClass)
 
-	for _, ns := range []string{n.SystemNS} {
-		ns := ns
-		s.eventually(func() bool {
-			_, err := s.kubectl("get", "namespace", ns)
-			return err != nil
-		}, 90*time.Second, 3*time.Second, "Namespace %s not removed", ns)
-	}
+	s.eventually(func() bool {
+		_, err := s.kubectl("get", "namespace", n.SystemNS)
+		return err != nil
+	}, 90*time.Second, 3*time.Second, "Namespace %s not removed", n.SystemNS)
 
 	prefix := fmt.Sprintf("eg-pair-%d", 2)
 	for _, res := range []string{
