@@ -38,13 +38,30 @@ Gateway manifest. Everything else in `tr-dataplane-{i}` is operator-owned.
 
 All names derive from `--prefix` (default `tr`) and pair index:
 
-| Field | Value (prefix=tr, index=1) |
-|---|---|
-| Release name | `eg-pair-1` |
-| System namespace | `tr-system-1` |
-| Dataplane namespace | `tr-dataplane-1` |
-| GatewayClass | `tr-1` |
-| Controller name | `gateway.envoyproxy.io/tr-1` |
+| Field | Default (prefix=tr, index=1) | Custom prefix (prefix=myapp, index=2) |
+|---|---|---|
+| Release name | `eg-pair-1` | `eg-pair-2` |
+| System namespace | `tr-system-1` | `myapp-system-2` |
+| Dataplane namespace | `tr-dataplane-1` | `myapp-dataplane-2` |
+| GatewayClass | `tr-1` | `myapp-2` |
+| Controller name | `gateway.envoyproxy.io/tr-1` | `gateway.envoyproxy.io/myapp-2` |
+
+The index suffix can also be replaced with a string by setting `pair.nameSuffix`
+directly on the chart (Helm path only; the CLI always uses the numeric index):
+
+```bash
+# Pair named "tr-prod" instead of "tr-1"
+helm upgrade --install eg-pair-prod ./charts/eg-pair \
+  --namespace tr-system-prod --create-namespace \
+  --set pair.namePrefix=tr \
+  --set pair.index=0 \
+  --set pair.nameSuffix=prod \
+  --set "gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-prod" \
+  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces" \
+  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-prod,tr-dataplane-prod}"
+```
+
+This produces: `tr-system-prod`, `tr-dataplane-prod`, GatewayClass `tr-prod`.
 
 ---
 
