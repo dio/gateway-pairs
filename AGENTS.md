@@ -33,9 +33,9 @@ Load these when working in this repo:
 - `make e2e` is the canonical e2e entry point. Always use `-count=1`.
 - Pair index is an integer. All names derive from it via `_helpers.tpl`.
   Do not hardcode `tr-system-1` or similar strings outside the helpers.
-- Watch list in the EG ConfigMap must include BOTH the system namespace and
-  the dataplane namespace. Omitting the system namespace causes
-  Accepted-but-not-Programmed Gateways.
+- Watch list in the EG ConfigMap must include the system namespace.
+  Omitting it causes Accepted-but-not-Programmed Gateways. There is no
+  separate dataplane namespace -- one namespace per pair.
 
 ## Layout
 
