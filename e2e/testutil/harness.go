@@ -68,14 +68,21 @@ func (h *Harness) Apply(ns, manifest string) {
 // Eventually polls fn until it returns true or timeout is exceeded.
 func (h *Harness) Eventually(fn func() bool, timeout, tick time.Duration, msg string, args ...interface{}) {
 	h.T.Helper()
+	if !h.eventuallyBool(fn, timeout, tick) {
+		h.T.Fatalf("condition not met within %s: %s", timeout, fmt.Sprintf(msg, args...))
+	}
+}
+
+// eventuallyBool polls fn until true or timeout, returning success. Non-fatal.
+func (h *Harness) eventuallyBool(fn func() bool, timeout, tick time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if fn() {
-			return
+			return true
 		}
 		time.Sleep(tick)
 	}
-	h.T.Fatalf("condition not met within %s: %s", timeout, fmt.Sprintf(msg, args...))
+	return false
 }
 
 // PortForward starts kubectl port-forward and returns a cancel func.
@@ -155,32 +162,28 @@ func (h *Harness) QuitProxyPods(ns string, baseLocalPort int) {
 			continue
 		}
 
-		// Poll until the tunnel is ready (max 5s, 200ms between attempts).
-		// A fixed sleep is unreliable on loaded CI runners.
+		// Use Eventually to poll until the port-forward tunnel is ready,
+		// then POST /quitquitquit. Best-effort -- failure falls back to force-delete.
 		url := fmt.Sprintf("http://127.0.0.1:%d/quitquitquit", localPort)
-		var curlErr error
-		var out []byte
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			curl := exec.CommandContext(h.Ctx, "curl",
+		var lastOut string
+		ok := false
+		h.eventuallyBool(func() bool {
+			out, err := sh.Output(h.Ctx, "curl",
 				"-s", "-X", "POST",
 				"--connect-timeout", "1",
 				"--max-time", "2",
 				url)
-			out, curlErr = curl.CombinedOutput()
-			if curlErr == nil {
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
+			lastOut = out
+			ok = err == nil
+			return ok
+		}, 5*time.Second, 200*time.Millisecond)
 		fwd.Process.Kill() //nolint:errcheck
-		if curlErr != nil {
-			h.T.Logf("quitquitquit failed for %s (%v: %s) -- force-deleting",
-				pod, curlErr, strings.TrimSpace(string(out)))
+		if !ok {
+			h.T.Logf("quitquitquit failed for %s (%s) -- force-deleting", pod, strings.TrimSpace(lastOut))
 			h.Kubectl("delete", "pod", pod, "-n", ns, //nolint:errcheck
 				"--grace-period=0", "--force", "--ignore-not-found")
 		} else {
-			h.T.Logf("quitquitquit sent to %s: %s", pod, strings.TrimSpace(string(out)))
+			h.T.Logf("quitquitquit sent to %s: %s", pod, strings.TrimSpace(lastOut))
 		}
 	}
 }
