@@ -37,10 +37,11 @@ type pairsBaseSuite struct {
 }
 
 func (s *pairsBaseSuite) SetupSuite() {
-	s.ctx, s.cancel = context.WithTimeout(context.Background(), 20*time.Minute)
+	timeout := 10*time.Minute + time.Duration(pairCount())*5*time.Minute
+	s.ctx, s.cancel = context.WithTimeout(context.Background(), timeout)
 
 	_, file, _, _ := runtime.Caller(0)
-	s.repoRoot = filepath.Join(filepath.Dir(file), "..")
+	s.repoRoot = filepath.Join(filepath.Dir(file), "../..")
 
 	keep := os.Getenv("KEEP_CLUSTER") == "1"
 
@@ -58,7 +59,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 	} else {
 		s.T().Log("reusing existing cluster", clusterName)
 		// Uninstall previous pair releases.
-		for i := 1; i <= 3; i++ {
+		for i := 1; i <= pairCount(); i++ {
 			n := namesFor(i)
 			release := fmt.Sprintf("eg-pair-%d", i)
 			exec.Command("helm", "--kube-context", ktx, //nolint:errcheck
@@ -69,8 +70,8 @@ func (s *pairsBaseSuite) SetupSuite() {
 		// Explicitly delete all pair namespaces. The release namespace is created
 		// by --create-namespace and is NOT tracked by the Helm release, so
 		// helm uninstall never removes it. Polling for its termination would block
-		// indefinitely. Delete all three namespaces for each pair unconditionally.
-		for i := 1; i <= 3; i++ {
+		// indefinitely. Delete both namespaces for each pair unconditionally.
+		for i := 1; i <= pairCount(); i++ {
 			n := namesFor(i)
 			for _, ns := range []string{n.SystemNS, n.DataplaneNS} {
 				exec.Command("kubectl", "--context", ktx, //nolint:errcheck
@@ -80,7 +81,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 		}
 		// Wait for all namespaces to terminate.
 		deadline := time.Now().Add(2 * time.Minute)
-		for _, i := range []int{1, 2, 3} {
+		for _, i := range pairIndices() {
 			n := namesFor(i)
 			for _, ns := range []string{n.SystemNS, n.DataplaneNS} {
 				ns := ns
