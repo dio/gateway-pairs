@@ -6,6 +6,10 @@
 inside a single Kubernetes cluster. Each pair is one Helm release of `eg-pair`.
 CRDs are installed once cluster-wide via `gwp crds install`.
 
+The successful indicator for this project is: use `eg-pair` to lay out the
+infrastructure, then install multiple instances of `tiered-router-eg` on top
+of it, each running in full isolation inside its own pair.
+
 ---
 
 ## Two-namespace model per pair
