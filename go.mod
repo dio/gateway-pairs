@@ -1,6 +1,6 @@
 module github.com/dio/gateway-pairs
 
-go 1.24
+go 1.26
 
 require (
 	github.com/dio/sh v0.0.2
