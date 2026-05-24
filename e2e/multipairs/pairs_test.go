@@ -181,17 +181,17 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 	release := fmt.Sprintf("eg-pair-%d", deleteIdx)
 	s.T().Logf("deleting %s from %s", release, n.SystemNS)
 
-	// Delete all Gateways so EG can clear its finalizer and deprovision the proxy
-	// Deployment before the controller is removed.
+	// Hit /quitquitquit on proxy pods FIRST, while still Running.
+	// See testutil.Harness.QuitProxyPods for full rationale.
+	s.quitProxyPods(n.DataplaneNS)
+
+	// Delete all Gateways so EG clears its finalizer and deprovisions the
+	// proxy Deployment before the controller is removed.
 	s.kubectl("delete", "gateways", "--all", "-n", n.DataplaneNS, //nolint:errcheck
 		"--ignore-not-found", "--wait=true", "--timeout=90s")
 	s.kubectl("delete", "envoyproxies", "--all", "-n", n.DataplaneNS, "--ignore-not-found") //nolint:errcheck
 
-	// Wait until the proxy Deployment is deleted, meaning EG has stopped
-	// managing the proxy pod. After this point, any Terminating proxy pod is
-	// only waiting out its terminationGracePeriodSeconds (EG default: 360s).
-	// Since the test cluster has no live connections, force-delete those pods
-	// immediately to avoid a 5+ minute wait per test run.
+	// Wait until the proxy Deployment is deleted -- EG has deprovisioned.
 	s.eventually(func() bool {
 		out, err := s.kubectl("get", "deployments", "-n", n.DataplaneNS,
 			"-l", "app.kubernetes.io/managed-by=envoy-gateway",
@@ -199,14 +199,7 @@ func (s *gatewayPairsSuite) Test10_DeletePair() {
 		return err == nil && strings.TrimSpace(out) == "[]"
 	}, 90*time.Second, 3*time.Second, "EG proxy Deployment not removed from %s", n.DataplaneNS)
 
-	// Force-delete any Terminating proxy pods. Safe here because:
-	// 1. The Deployment is gone -- no new pods will be created.
-	// 2. The test cluster has no live connections to drain.
-	// 3. The pod is only Terminating due to the 360s grace period, not finalizers.
-	s.kubectl("delete", "pods", "--all", "-n", n.DataplaneNS, //nolint:errcheck
-		"--grace-period=0", "--force", "--ignore-not-found")
-
-	// Also wait for EG-owned Services to be removed (they're GC'd after the Deployment).
+	// Also wait for EG-owned Services to be removed (GC'd after the Deployment).
 	s.eventually(func() bool {
 		out, err := s.kubectl("get", "services", "-n", n.DataplaneNS,
 			"-l", "gateway.envoyproxy.io/owning-gateway-namespace="+n.DataplaneNS,
@@ -339,14 +332,15 @@ func (s *gatewayPairsSuite) findGatewayService(ns string) (string, error) {
 }
 
 func (s *gatewayPairsSuite) portForward(ns, resource, ports string) func() {
-	cmd := exec.Command("kubectl", "--context", ktx,
-		"port-forward", "-n", ns, resource, ports)
-	_ = cmd.Start()
-	return func() {
-		if cmd.Process != nil {
-			cmd.Process.Kill() //nolint:errcheck
-		}
-	}
+	h := testutil.Harness{T: s.T(), Ctx: s.ctx, Ktx: ktx}
+	return h.PortForward(ns, resource, ports)
+}
+
+func (s *gatewayPairsSuite) quitProxyPods(ns string) {
+	// Delegate to testutil.Harness -- see QuitProxyPods for full rationale.
+	// baseLocalPort 19100+ avoids conflicts with gateway port-forward (18080+).
+	h := testutil.Harness{T: s.T(), Ctx: s.ctx, Ktx: ktx}
+	h.QuitProxyPods(ns, 19100)
 }
 
 func (s *gatewayPairsSuite) verifyGatewayAPICRDs() {

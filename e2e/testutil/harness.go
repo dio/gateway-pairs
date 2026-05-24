@@ -101,6 +101,77 @@ func (h *Harness) FindGWSvc(ns string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// QuitProxyPods sends POST /quitquitquit to every running Envoy proxy pod
+// in ns via kubectl port-forward + HTTP POST.
+//
+// WHY THIS EXISTS
+//
+// EG sets terminationGracePeriodSeconds = drainTimeout + 300s (default 360s).
+// Even with zero live connections the pod sits Terminating for the full
+// grace period, blocking namespace deletion. The Envoy admin /quitquitquit
+// endpoint triggers an immediate graceful shutdown: the process exits as
+// soon as the connection drain completes -- which is instant in a test cluster.
+// This collapses the 360s wait to <1s.
+//
+// WHY PORT-FORWARD (NOT EXEC)
+//
+// EG uses distroless images (no shell, no wget). kubectl exec is therefore
+// useless. The admin API listens on 127.0.0.1:19000 (localhost only by
+// design -- see EG threat model). Port-forwarding from outside the cluster
+// is the only access path.
+//
+// WHEN TO CALL
+//
+// Before deleting the Gateway. Port-forward to a Terminating pod is
+// unreliable because the kubelet may refuse new connections once SIGTERM is
+// delivered. Call this while pods are still in Running phase.
+//
+// baseLocalPort is the first host port to use (e.g. 19100). Each pod gets
+// baseLocalPort+i to avoid conflicts.
+//
+// Best-effort: port-forward or curl failures are logged and the pod is
+// force-deleted as a fallback so the test can continue.
+func (h *Harness) QuitProxyPods(ns string, baseLocalPort int) {
+	h.T.Helper()
+	pods, err := h.Kubectl("get", "pods", "-n", ns,
+		"-l", "app.kubernetes.io/managed-by=envoy-gateway",
+		"--field-selector=status.phase=Running",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+		"--ignore-not-found")
+	if err != nil || strings.TrimSpace(pods) == "" {
+		return
+	}
+	for i, pod := range strings.Fields(pods) {
+		localPort := baseLocalPort + i
+		h.T.Logf("sending /quitquitquit to %s/%s via :%d", ns, pod, localPort)
+
+		fwd := exec.CommandContext(h.Ctx, "kubectl", "--context", h.Ktx,
+			"port-forward", "-n", ns, "pod/"+pod,
+			fmt.Sprintf("%d:19000", localPort))
+		if startErr := fwd.Start(); startErr != nil {
+			h.T.Logf("port-forward start failed for %s: %v (force-deleting)", pod, startErr)
+			h.Kubectl("delete", "pod", pod, "-n", ns, //nolint:errcheck
+				"--grace-period=0", "--force", "--ignore-not-found")
+			continue
+		}
+		// Give the tunnel a moment to establish.
+		time.Sleep(300 * time.Millisecond)
+
+		curl := exec.CommandContext(h.Ctx, "curl", "-s", "-X", "POST",
+			fmt.Sprintf("http://127.0.0.1:%d/quitquitquit", localPort))
+		out, curlErr := curl.CombinedOutput()
+		fwd.Process.Kill() //nolint:errcheck
+		if curlErr != nil {
+			h.T.Logf("quitquitquit failed for %s (%v: %s) -- force-deleting",
+				pod, curlErr, strings.TrimSpace(string(out)))
+			h.Kubectl("delete", "pod", pod, "-n", ns, //nolint:errcheck
+				"--grace-period=0", "--force", "--ignore-not-found")
+		} else {
+			h.T.Logf("quitquitquit sent to %s: %s", pod, strings.TrimSpace(string(out)))
+		}
+	}
+}
+
 // WaitNS polls until all given namespaces are gone (max 2 minutes).
 func (h *Harness) WaitNS(namespaces ...string) {
 	deadline := time.Now().Add(2 * time.Minute)
