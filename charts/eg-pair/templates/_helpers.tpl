@@ -9,9 +9,9 @@ Rules:
 
 Examples (role = "system"):
   namePrefix=tr,   index=1 → tr-system-1
-  namePrefix=tars, index=1 → tars-system-1
-  namePrefix=tars, index=0 → tars-system
-  namePrefix=tars, index=1, nameSuffix=1 → tars-system1
+  namePrefix=tr, index=1 → tr-system-1
+  namePrefix=tr, index=0 → tr-system
+  namePrefix=tr, index=1, nameSuffix=1 → tr-system1
   namePrefix="",   index=1 → system-1
   namePrefix="",   index=0 → system
 */}}
@@ -48,7 +48,7 @@ In GatewayNamespace mode proxy lands in the Gateway's namespace (= systemNS).
 
 {{/*
 GatewayClass name: prefix + suffix only (no role fragment).
-e.g. tr-1, tars-1, tars-prod
+e.g. tr-1, tr-1, tr-prod
 */}}
 {{- define "eg-pair.gatewayClassName" -}}
 {{- $p := .Values.pair.namePrefix | toString -}}
@@ -64,7 +64,7 @@ e.g. tr-1, tars-1, tars-prod
 
 {{/*
 Cluster-scoped resource prefix (for ClusterRoles, ClusterRoleBindings).
-e.g. eg-pair-tr-1, eg-pair-tars-prod
+e.g. eg-pair-tr-1, eg-pair-tr-prod
 */}}
 {{- define "eg-pair.prefix" -}}
 eg-pair-{{ include "eg-pair.gatewayClassName" . }}

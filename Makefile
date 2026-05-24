@@ -5,7 +5,7 @@ KTX           = k3d-$(CLUSTER)
 PAIR         ?= 1
 # PAIR_PREFIX controls all namespace and GatewayClass names.
 # Default: tr  →  tr-release-1, tr-system-1, tr-dataplane-1, GatewayClass tr-1
-# Override: PAIR_PREFIX=tars make pair-install  →  tars-release-1, tars-system-1, ...
+# Override: PAIR_PREFIX=tr make pair-install  →  tr-release-1, tr-system-1, ...
 # Set PAIR_PREFIX="" to drop the prefix entirely: release-1, system-1, etc.
 PAIR_PREFIX  ?= tr
 

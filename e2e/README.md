@@ -19,7 +19,7 @@ delete and reinstall, then tears down.
 make e2e
 
 # Custom namespace prefix (default: tr)
-PAIR_PREFIX=tars make e2e
+PAIR_PREFIX=myapp make e2e
 
 # Keep cluster after run
 KEEP_CLUSTER=1 make e2e
@@ -42,14 +42,14 @@ Always use `-count=1`. Cached results skip the real cluster run.
 | PAIR_PREFIX | index | SystemNS (= release NS) | GatewayClass |
 |-------------|-------|-------------------------|--------------|
 | `tr`        | 1     | tr-system-1             | tr-1         |
-| `tars`      | 1     | tars-release-1  | tars-system-1  | tars-dataplane-1  | tars-1       |
+| `myapp`     | 1     | myapp-system-1  | myapp-system-1 | myapp-dataplane-1 | myapp-1      |
 | `""`        | 1     | release-1       | system-1       | dataplane-1       | 1            |
 
 The same prefix must be passed to both the test suite and the chart:
-- `make e2e PAIR_PREFIX=tars` -- passes `PAIR_PREFIX=tars` to the suite and
-  `--set pair.namePrefix=tars` to helm automatically.
-- `make pair-install PAIR=1 PAIR_PREFIX=tars` -- Makefile derives the release
-  namespace and passes `--set pair.namePrefix=tars` to helm.
+- `make e2e PAIR_PREFIX=myapp` -- passes `PAIR_PREFIX=myapp` to the suite and
+  `--set pair.namePrefix=myapp` to helm automatically.
+- `make pair-install PAIR=1 PAIR_PREFIX=myapp` -- Makefile derives the
+  namespace and passes `--set pair.namePrefix=myapp` to helm.
 
 ## Test sequence
 

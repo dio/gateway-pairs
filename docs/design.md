@@ -6,9 +6,6 @@
 inside a single Kubernetes cluster. Each pair is one Helm release of `eg-pair`.
 CRDs are installed once cluster-wide via `eg-crds` + `hack/install-crds.sh`.
 
-This design is grounded in the production layout observed in `tars-system` /
-`tars-dataplane` on GKE (`KUBECONFIG=~/gke-dp-dev`).
-
 ---
 
 ## Two-namespace model per pair
@@ -98,11 +95,11 @@ All names derive from three chart values: `pair.namePrefix`, `pair.index`, and
 | namePrefix | index | nameSuffix | systemNS | dataplaneNS | GatewayClass |
 |---|---|---|---|---|---|
 | `tr` | `1` | `""` | `tr-system-1` | `tr-dataplane-1` | `tr-1` |
-| `tars` | `1` | `""` | `tars-system-1` | `tars-dataplane-1` | `tars-1` |
-| `tars` | `0` | `""` | `tars-system` | `tars-dataplane` | `tars` |
-| `tars` | `0` | `-prod` | `tars-system-prod` | `tars-dataplane-prod` | `tars-prod` |
-| `tars` | `0` | `-eu-west` | `tars-system-eu-west` | `tars-dataplane-eu-west` | `tars-eu-west` |
-| `tars` | `1` | `1` | `tars-system1` | `tars-dataplane1` | `tars-1` |
+| `myapp` | `1` | `""` | `myapp-system-1` | `myapp-dataplane-1` | `myapp-1` |
+| `myapp` | `0` | `""` | `myapp-system` | `myapp-dataplane` | `myapp` |
+| `myapp` | `0` | `-prod` | `myapp-system-prod` | `myapp-dataplane-prod` | `myapp-prod` |
+| `myapp` | `0` | `-eu-west` | `myapp-system-eu-west` | `myapp-dataplane-eu-west` | `myapp-eu-west` |
+| `myapp` | `1` | `1` | `myapp-system1` | `myapp-dataplane1` | `myapp-1` |
 | `""` | `1` | `""` | `system-1` | `dataplane-1` | `1` |
 
 The `nameSuffix` field gives full control when the default `index`-based naming
@@ -113,12 +110,12 @@ doesn't fit. Common patterns:
 --set pair.index=1
 
 # Environment-named pair
---set pair.namePrefix=tars --set pair.index=0 --set pair.nameSuffix=-prod
+--set pair.namePrefix=myapp --set pair.index=0 --set pair.nameSuffix=-prod
 
 # Region-named pair
---set pair.namePrefix=tars --set pair.index=0 --set pair.nameSuffix=-eu-west
+--set pair.namePrefix=myapp --set pair.index=0 --set pair.nameSuffix=-eu-west
 
-# Custom prefix only (no tars)
+# Custom prefix
 --set pair.namePrefix=myapp --set pair.index=1
 ```
 

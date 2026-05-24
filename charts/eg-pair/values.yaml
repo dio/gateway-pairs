@@ -6,7 +6,7 @@ pair:
   # A trailing hyphen is added automatically when the prefix is non-empty
   # and does not already end with one.
   #   "tr"   → "tr-"   (auto-hyphen)
-  #   "tars-" → "tars-" (already has hyphen)
+  #   "tr-" → "tr-" (already has hyphen)
   #   ""      → ""      (no prefix, no hyphen)
   namePrefix: tr
   # Suffix appended after the role name. Caller controls any separator.

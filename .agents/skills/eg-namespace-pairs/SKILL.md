@@ -94,9 +94,9 @@ Resource ownership by scope:
 Examples:
 ```
 namePrefix=tr,   index=1, nameSuffix=""   → tr-system-1, tr-1
-namePrefix=tars, index=1, nameSuffix=""   → tars-system-1, tars-1
-namePrefix=tars, index=0, nameSuffix=""   → tars-system, tars
-namePrefix=tars, index=1, nameSuffix=1    → tars-system1, tars1
+namePrefix=tr, index=1, nameSuffix=""   → tr-system-1, tr-1
+namePrefix=tr, index=0, nameSuffix=""   → tr-system, tr
+namePrefix=tr, index=1, nameSuffix=1    → tr-system1, tr1
 namePrefix="",   index=1, nameSuffix=""   → system-1
 ```
 
