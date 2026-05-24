@@ -64,6 +64,11 @@ type GatewayStatus struct {
 type InstallOptions struct {
 	// Prefix is the name prefix (e.g. "tr"). Default: "tr".
 	Prefix string
+	// Suffix is an optional string override for the index in all resource names
+	// (e.g. "prod" → tr-system-prod, GatewayClass tr-prod). When non-empty,
+	// the numeric index is still passed for Helm release naming but Suffix
+	// replaces the index in all other derived names.
+	Suffix string
 	// ExtraSet are additional --set flags passed to helm.
 	ExtraSet []string
 	// HelmTimeout is the --timeout value for helm upgrade --install.
@@ -92,7 +97,12 @@ func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index i
 		opts.Out = os.Stdout
 	}
 
-	n := names.For(opts.Prefix, index)
+	var n names.Pair
+	if opts.Suffix != "" {
+		n = names.ForSuffix(opts.Prefix, opts.Suffix)
+	} else {
+		n = names.For(opts.Prefix, index)
+	}
 
 	chartDir, cleanup, err := extractChart()
 	if err != nil {
@@ -113,6 +123,10 @@ func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index i
 		"--set", "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces=" + watchNS,
 		"--skip-crds",
 		"--timeout", helmTimeout(opts.HelmTimeout),
+	}
+	if opts.Suffix != "" {
+		// index=0 tells the chart to use nameSuffix instead of the numeric index.
+		args = append(args, "--set", "pair.index=0", "--set", "pair.nameSuffix="+opts.Suffix)
 	}
 	for _, s := range opts.ExtraSet {
 		args = append(args, "--set", s)
@@ -163,14 +177,19 @@ func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index i
 // For immediate exit with no live connections, POST /quitquitquit to the
 // Envoy admin API (127.0.0.1:19000) via kubectl port-forward before deleting
 // the Gateway -- see e2e/testutil.Harness.QuitProxyPods for the implementation.
-func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix string, out io.Writer) error {
+func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix, suffix string, out io.Writer) error {
 	if prefix == "" {
 		prefix = "tr"
 	}
 	if out == nil {
 		out = os.Stdout
 	}
-	n := names.For(prefix, index)
+	var n names.Pair
+	if suffix != "" {
+		n = names.ForSuffix(prefix, suffix)
+	} else {
+		n = names.For(prefix, index)
+	}
 
 	// Step 1: Delete all Gateways so EG deprovisions proxies before the
 	// controller is removed. --wait blocks until EG removes the Deployment
@@ -218,11 +237,16 @@ func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index in
 }
 
 // Get returns the status of a single installed pair.
-func Get(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix string) (*Status, error) {
+func Get(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix, suffix string) (*Status, error) {
 	if prefix == "" {
 		prefix = "tr"
 	}
-	n := names.For(prefix, index)
+	var n names.Pair
+	if suffix != "" {
+		n = names.ForSuffix(prefix, suffix)
+	} else {
+		n = names.For(prefix, index)
+	}
 
 	releases, err := helmClient.List(ctx, "^"+n.ReleaseName+"$")
 	if err != nil {
@@ -294,7 +318,7 @@ func List(ctx context.Context, helmClient Helmer, kubeClient Kubectl, prefix str
 		if index == 0 {
 			continue
 		}
-		s, err := Get(ctx, helmClient, kubeClient, index, prefix)
+		s, err := Get(ctx, helmClient, kubeClient, index, prefix, "")
 		if err != nil {
 			return nil, err
 		}
@@ -304,7 +328,10 @@ func List(ctx context.Context, helmClient Helmer, kubeClient Kubectl, prefix str
 }
 
 // Info returns the coupling fields an operator needs when writing Layer 3 manifests.
-func Info(prefix string, index int) names.Pair {
+func Info(prefix, suffix string, index int) names.Pair {
+	if suffix != "" {
+		return names.ForSuffix(prefix, suffix)
+	}
 	if prefix == "" {
 		prefix = "tr"
 	}

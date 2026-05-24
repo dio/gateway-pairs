@@ -46,11 +46,21 @@ All names derive from `--prefix` (default `tr`) and pair index:
 | GatewayClass | `tr-1` | `myapp-2` |
 | Controller name | `gateway.envoyproxy.io/tr-1` | `gateway.envoyproxy.io/myapp-2` |
 
-The index suffix can also be replaced with a string by setting `pair.nameSuffix`
-directly on the chart (Helm path only; the CLI always uses the numeric index):
+The index suffix can also be replaced with a string. This works in both paths
+but the flag differs:
+
+**CLI path:**
 
 ```bash
 # Pair named "tr-prod" instead of "tr-1"
+gwp --prefix tr --suffix prod pair install 1
+gwp --prefix tr --suffix prod pair status 1
+gwp --prefix tr --suffix prod pair delete 1
+```
+
+**Helm path:**
+
+```bash
 helm upgrade --install eg-pair-prod ./charts/eg-pair \
   --namespace tr-system-prod --create-namespace \
   --set pair.namePrefix=tr \
@@ -61,7 +71,11 @@ helm upgrade --install eg-pair-prod ./charts/eg-pair \
   --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-prod,tr-dataplane-prod}"
 ```
 
-This produces: `tr-system-prod`, `tr-dataplane-prod`, GatewayClass `tr-prod`.
+Both produce: `tr-system-prod`, `tr-dataplane-prod`, GatewayClass `tr-prod`.
+
+When using `--suffix`, `--index` / `pair.index=0` tells the chart to use the
+suffix instead of a number. The Helm release name still uses the index
+(`eg-pair-1`, `eg-pair-2`, ...) for uniqueness within the cluster.
 
 ---
 

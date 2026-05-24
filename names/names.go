@@ -8,42 +8,59 @@ import "fmt"
 type Pair struct {
 	// Prefix is the base prefix (e.g. "tr").
 	Prefix string `json:"prefix"`
-	// Index is the pair number (e.g. 1).
+	// Index is the pair number (e.g. 1). Zero when Suffix is set.
 	Index int `json:"index"`
+	// Suffix is an optional string override for the index (e.g. "prod").
+	// When non-empty, Index must be 0 and Suffix is used verbatim.
+	Suffix string `json:"suffix,omitempty"`
 
 	// SystemNS is the Helm release namespace and controller namespace.
-	// e.g. "tr-system-1"
+	// e.g. "tr-system-1" or "tr-system-prod"
 	SystemNS string `json:"systemNamespace"`
 	// DataplaneNS is the namespace for Gateways, proxies, and HTTPRoutes.
-	// e.g. "tr-dataplane-1"
+	// e.g. "tr-dataplane-1" or "tr-dataplane-prod"
 	DataplaneNS string `json:"dataplaneNamespace"`
 	// GatewayClass is the cluster-scoped GatewayClass name.
-	// e.g. "tr-1"
+	// e.g. "tr-1" or "tr-prod"
 	GatewayClass string `json:"gatewayClass"`
 	// ControllerName is the unique EG controller identifier.
-	// e.g. "gateway.envoyproxy.io/tr-1"
+	// e.g. "gateway.envoyproxy.io/tr-1" or "gateway.envoyproxy.io/tr-prod"
 	ControllerName string `json:"controllerName"`
 	// ReleaseName is the Helm release name.
-	// e.g. "eg-pair-1"
+	// e.g. "eg-pair-1" or "eg-pair-prod"
 	ReleaseName string `json:"releaseName"`
 }
 
-// For returns all derived names for a pair given prefix and index.
+// For returns all derived names for a numeric pair (prefix + index).
+// Mirrors: namePrefix=tr, index=1 → tr-system-1, tr-dataplane-1, GatewayClass tr-1.
 // prefix="" is valid (produces "system-1", "dataplane-1", "1").
 func For(prefix string, index int) Pair {
+	return forInternal(prefix, fmt.Sprintf("%d", index), index, "")
+}
+
+// ForSuffix returns all derived names for a string-suffixed pair (prefix + suffix).
+// Mirrors: namePrefix=tr, index=0, nameSuffix=prod → tr-system-prod, tr-dataplane-prod, GatewayClass tr-prod.
+// Use this when you want named pairs (e.g. "prod", "staging") instead of numeric ones.
+func ForSuffix(prefix, suffix string) Pair {
+	return forInternal(prefix, suffix, 0, suffix)
+}
+
+func forInternal(prefix, idStr string, index int, suffix string) Pair {
 	sep := ""
 	if prefix != "" {
 		sep = "-"
 	}
-	gc := fmt.Sprintf("%s%s%d", prefix, sep, index)
+	gc := fmt.Sprintf("%s%s%s", prefix, sep, idStr)
+	release := "eg-pair-" + idStr
 	return Pair{
 		Prefix:         prefix,
 		Index:          index,
-		SystemNS:       fmt.Sprintf("%s%ssystem-%d", prefix, sep, index),
-		DataplaneNS:    fmt.Sprintf("%s%sdataplane-%d", prefix, sep, index),
+		Suffix:         suffix,
+		SystemNS:       fmt.Sprintf("%s%ssystem-%s", prefix, sep, idStr),
+		DataplaneNS:    fmt.Sprintf("%s%sdataplane-%s", prefix, sep, idStr),
 		GatewayClass:   gc,
 		ControllerName: "gateway.envoyproxy.io/" + gc,
-		ReleaseName:    fmt.Sprintf("eg-pair-%d", index),
+		ReleaseName:    release,
 	}
 }
 

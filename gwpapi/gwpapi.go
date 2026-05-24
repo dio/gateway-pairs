@@ -29,14 +29,17 @@ import (
 	"github.com/dio/gateway-pairs/pair"
 )
 
-// Options configures a Client.
+// Options configures the gwpapi Client.
 type Options struct {
-	// KubeContext selects the kubectl/helm context. Default: current context.
+	// KubeContext is the kubectl context name. Default: current context.
 	KubeContext string
 	// Kubeconfig is the path to the kubeconfig file. Default: ~/.kube/config.
 	Kubeconfig string
 	// Prefix is the name prefix applied to all derived resource names. Default: "tr".
 	Prefix string
+	// Suffix is an optional string override for the numeric index in all resource names
+	// (e.g. "prod" → tr-system-prod, GatewayClass tr-prod).
+	Suffix string
 }
 
 // Client is the main entry point for embedding gwp operations.
@@ -118,6 +121,7 @@ type PairInstallOptions struct {
 func (c *Client) PairInstall(ctx context.Context, index int, opts PairInstallOptions) error {
 	return pair.Install(ctx, c.helm, c.kube, index, pair.InstallOptions{
 		Prefix:      c.opts.Prefix,
+		Suffix:      c.opts.Suffix,
 		ExtraSet:    opts.ExtraSet,
 		HelmTimeout: opts.HelmTimeout,
 		WaitTimeout: opts.WaitTimeout,
@@ -127,12 +131,12 @@ func (c *Client) PairInstall(ctx context.Context, index int, opts PairInstallOpt
 
 // PairDelete uninstalls pair index.
 func (c *Client) PairDelete(ctx context.Context, index int, out io.Writer) error {
-	return pair.Delete(ctx, c.helm, c.kube, index, c.opts.Prefix, out)
+	return pair.Delete(ctx, c.helm, c.kube, index, c.opts.Prefix, c.opts.Suffix, out)
 }
 
 // PairGet returns the status of a single installed pair.
 func (c *Client) PairGet(ctx context.Context, index int) (*PairStatus, error) {
-	return pair.Get(ctx, c.helm, c.kube, index, c.opts.Prefix)
+	return pair.Get(ctx, c.helm, c.kube, index, c.opts.Prefix, c.opts.Suffix)
 }
 
 // PairList returns the status of all installed pairs.
@@ -142,5 +146,5 @@ func (c *Client) PairList(ctx context.Context) ([]*PairStatus, error) {
 
 // PairInfo returns the coupling fields needed to write Layer 3 manifests for pair index.
 func (c *Client) PairInfo(index int) names.Pair {
-	return pair.Info(c.opts.Prefix, index)
+	return pair.Info(c.opts.Prefix, c.opts.Suffix, index)
 }

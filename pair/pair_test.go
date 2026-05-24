@@ -15,7 +15,7 @@ func TestGet_notInstalled(t *testing.T) {
 	h := &fake.Helm{Releases: map[string][]helm.Release{}}
 	k := &fake.Kubectl{}
 
-	s, err := pair.Get(context.Background(), h, k, 1, "tr")
+	s, err := pair.Get(context.Background(), h, k, 1, "tr", "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestGet_deployed_controllerAvailable(t *testing.T) {
 	// GatewayClass conditions: return Accepted=True for gatewayclass query
 	k.Responses["gatewayclass"] = "Accepted=True "
 
-	s, err := pair.Get(context.Background(), h, k, 1, "tr")
+	s, err := pair.Get(context.Background(), h, k, 1, "tr", "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestGet_names_derivedFromPrefix(t *testing.T) {
 	h := &fake.Helm{Releases: map[string][]helm.Release{}}
 	k := &fake.Kubectl{}
 
-	s, err := pair.Get(context.Background(), h, k, 5, "myapp")
+	s, err := pair.Get(context.Background(), h, k, 5, "myapp", "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestList_twoPairs(t *testing.T) {
 }
 
 func TestInfo_derivesCorrectNames(t *testing.T) {
-	n := pair.Info("tr", 3)
+	n := pair.Info("tr", "", 3)
 	if n.GatewayClass != "tr-3" {
 		t.Errorf("GatewayClass = %q, want tr-3", n.GatewayClass)
 	}
@@ -123,7 +123,7 @@ func TestDelete_waitsForProxyGone(t *testing.T) {
 	// The poll loop should exit immediately on the first check.
 	k := &fake.Kubectl{}
 	var out strings.Builder
-	err := pair.Delete(context.Background(), h, k, 1, "tr", &out)
+	err := pair.Delete(context.Background(), h, k, 1, "tr", "", &out)
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestDelete_cleanNamespace(t *testing.T) {
 	h := &fake.Helm{}
 	k := &fake.Kubectl{} // empty responses -- clean state
 	var out strings.Builder
-	err := pair.Delete(context.Background(), h, k, 2, "tr", &out)
+	err := pair.Delete(context.Background(), h, k, 2, "tr", "", &out)
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}

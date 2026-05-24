@@ -18,6 +18,7 @@ import (
 	"github.com/dio/gateway-pairs/crd"
 	"github.com/dio/gateway-pairs/gwpapi"
 	"github.com/dio/gateway-pairs/internal/kube"
+	"github.com/dio/gateway-pairs/names"
 	"github.com/dio/gateway-pairs/pair"
 )
 
@@ -34,7 +35,8 @@ var (
 	globalContext    string
 	globalKubeconfig string
 	globalPrefix     string
-	globalOutput     string // "text" or "json"
+	globalSuffix     string
+	globalOutput     string
 )
 
 // Execute builds and runs the root command.
@@ -52,6 +54,9 @@ func Execute(info BuildInfo) error {
 		"path to kubeconfig file (default: ~/.kube/config)")
 	root.PersistentFlags().StringVar(&globalPrefix, "prefix", "tr",
 		`name prefix for all derived resource names (e.g. "tr" → tr-system-1, tr-1)`)
+	root.PersistentFlags().StringVar(&globalSuffix, "suffix", "",
+		`string suffix override (e.g. "prod" → tr-system-prod, GatewayClass tr-prod). `+
+			`When set, replaces the numeric index in all names; use --suffix instead of an index.`)
 	root.PersistentFlags().StringVarP(&globalOutput, "output", "o", "text",
 		"output format: text or json")
 
@@ -69,6 +74,7 @@ func apiClient() *gwpapi.Client {
 		KubeContext: globalContext,
 		Kubeconfig:  globalKubeconfig,
 		Prefix:      globalPrefix,
+		Suffix:      globalSuffix,
 	})
 }
 
@@ -168,6 +174,16 @@ func newCRDsInstallCmd() *cobra.Command {
 }
 
 // ── pair ──────────────────────────────────────────────────────────────────────
+
+// pairNames returns the derived names for a pair, respecting --suffix.
+// When --suffix is set, the numeric index is used only for the Helm release
+// ordering; all resource names derive from the suffix string instead.
+func pairNames(index int) names.Pair {
+	if globalSuffix != "" {
+		return names.ForSuffix(globalPrefix, globalSuffix)
+	}
+	return names.For(globalPrefix, index)
+}
 
 func newPairCmd(info BuildInfo) *cobra.Command {
 	cmd := &cobra.Command{
@@ -324,7 +340,7 @@ func newPairInfoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n := pair.Info(globalPrefix, index)
+			n := pair.Info(globalPrefix, globalSuffix, index)
 			return emit(cmd.OutOrStdout(), n, func(w io.Writer) {
 				fmt.Fprintf(w, "Pair %d:\n", index)
 				fmt.Fprintf(w, "  gatewayClassName:    %s\n", n.GatewayClass)
