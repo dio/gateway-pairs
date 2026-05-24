@@ -35,6 +35,7 @@ var (
 	globalContext    string
 	globalKubeconfig string
 	globalPrefix     string
+	globalNoPrefix   bool
 	globalSuffix     string
 	globalOutput     string
 )
@@ -54,6 +55,8 @@ func Execute(info BuildInfo) error {
 		"path to kubeconfig file (default: ~/.kube/config)")
 	root.PersistentFlags().StringVar(&globalPrefix, "prefix", "tr",
 		`name prefix for all derived resource names (e.g. "tr" → tr-system-1, tr-1)`)
+	root.PersistentFlags().BoolVar(&globalNoPrefix, "no-prefix", false,
+		`use no prefix: produces system-1, dataplane-1 instead of tr-system-1, tr-dataplane-1`)
 	root.PersistentFlags().StringVar(&globalSuffix, "suffix", "",
 		`string suffix override (e.g. "prod" → tr-system-prod, GatewayClass tr-prod). `+
 			`When set, replaces the numeric index in all names; use --suffix instead of an index.`)
@@ -69,11 +72,18 @@ func Execute(info BuildInfo) error {
 	return root.Execute()
 }
 
+func effectivePrefix() string {
+	if globalNoPrefix {
+		return ""
+	}
+	return globalPrefix
+}
+
 func apiClient() *gwpapi.Client {
 	return gwpapi.New(gwpapi.Options{
 		KubeContext: globalContext,
 		Kubeconfig:  globalKubeconfig,
-		Prefix:      globalPrefix,
+		Prefix:      effectivePrefix(),
 		Suffix:      globalSuffix,
 	})
 }
@@ -180,9 +190,9 @@ func newCRDsInstallCmd() *cobra.Command {
 // ordering; all resource names derive from the suffix string instead.
 func pairNames(index int) names.Pair {
 	if globalSuffix != "" {
-		return names.ForSuffix(globalPrefix, globalSuffix)
+		return names.ForSuffix(effectivePrefix(), globalSuffix)
 	}
-	return names.For(globalPrefix, index)
+	return names.For(effectivePrefix(), index)
 }
 
 func newPairCmd(info BuildInfo) *cobra.Command {
@@ -340,7 +350,7 @@ func newPairInfoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n := pair.Info(globalPrefix, globalSuffix, index)
+			n := pair.Info(effectivePrefix(), globalSuffix, index)
 			return emit(cmd.OutOrStdout(), n, func(w io.Writer) {
 				fmt.Fprintf(w, "Pair %d:\n", index)
 				fmt.Fprintf(w, "  gatewayClassName:    %s\n", n.GatewayClass)

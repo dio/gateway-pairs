@@ -38,13 +38,13 @@ Gateway manifest. Everything else in `tr-dataplane-{i}` is operator-owned.
 
 All names derive from `--prefix` (default `tr`) and pair index:
 
-| Field | Default (prefix=tr, index=1) | Custom prefix (prefix=myapp, index=2) |
-|---|---|---|
-| Release name | `eg-pair-1` | `eg-pair-2` |
-| System namespace | `tr-system-1` | `myapp-system-2` |
-| Dataplane namespace | `tr-dataplane-1` | `myapp-dataplane-2` |
-| GatewayClass | `tr-1` | `myapp-2` |
-| Controller name | `gateway.envoyproxy.io/tr-1` | `gateway.envoyproxy.io/myapp-2` |
+| Field | Default (prefix=tr, index=1) | Custom prefix (prefix=myapp, index=2) | No prefix (--no-prefix, index=1) |
+|---|---|---|---|
+| Release name | `eg-pair-1` | `eg-pair-2` | `eg-pair-1` |
+| System namespace | `tr-system-1` | `myapp-system-2` | `system-1` |
+| Dataplane namespace | `tr-dataplane-1` | `myapp-dataplane-2` | `dataplane-1` |
+| GatewayClass | `tr-1` | `myapp-2` | `1` |
+| Controller name | `gateway.envoyproxy.io/tr-1` | `gateway.envoyproxy.io/myapp-2` | `gateway.envoyproxy.io/1` |
 
 The index suffix can also be replaced with a string. This works in both paths
 but the flag differs:
@@ -52,11 +52,18 @@ but the flag differs:
 **CLI path:**
 
 ```bash
-# Pair named "tr-prod" instead of "tr-1"
-gwp --prefix tr --suffix prod pair install 1
-gwp --prefix tr --suffix prod pair status 1
-gwp --prefix tr --suffix prod pair delete 1
+# Numeric index (default)
+gwp pair install 1                        # tr-system-1, GatewayClass tr-1
+gwp --prefix myapp pair install 1         # myapp-system-1, GatewayClass myapp-1
+gwp --no-prefix pair install 1            # system-1, GatewayClass 1
+
+# String suffix instead of numeric index
+gwp --suffix prod pair install 1          # tr-system-prod, GatewayClass tr-prod
+gwp --no-prefix --suffix prod pair install 1  # system-prod, GatewayClass prod
 ```
+
+Use `--no-prefix` rather than `--prefix ""` to avoid shell quoting issues in
+Makefiles and CI scripts.
 
 **Helm path:**
 
