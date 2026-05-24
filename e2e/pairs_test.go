@@ -60,10 +60,8 @@ func (s *gatewayPairsSuite) Test05_VerifyIsolation() {
 		s.Equal("1", strings.TrimSpace(out),
 			"expected 1 available replica in %s", n.SystemNS)
 	}
-	for _, i := range []int{1, 2, 3} {
-		n := namesFor(i)
-		// No separate dataplane namespace -- proxy and controller share SystemNS.
-	}
+	// No separate dataplane namespace -- proxy and controller share SystemNS.
+	// The per-pair controller Available check above is sufficient for isolation.
 }
 
 func (s *gatewayPairsSuite) Test06_VerifyGatewayClasses() {
