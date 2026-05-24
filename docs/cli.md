@@ -548,15 +548,79 @@ is required.
 [WARN] envoy-gateway CRDs not installed -- run: gwp crds install
 ```
 
-### 6. GatewayClass name conflicts (if `--pair <index>` passed)
+### 6. Cluster-scoped resource conflicts (if `--pair <index>` passed)
 
-Check if `tr-{index}` already exists and is not owned by this Helm release.
+Cluster-scoped resources must be unique per pair. Two pairs sharing any of
+these will conflict silently or loudly depending on the resource type. `gwp`
+checks all of them before install.
+
+#### GatewayClass name
+
+`tr-{i}` must not exist unless it is owned by this Helm release. If it exists
+and belongs to another release (or was created out of band), installing will
+fail or produce a broken state where two controllers claim the same class.
 
 ```
-[OK]   GatewayClass tr-1 does not exist
-[FAIL] GatewayClass tr-1 exists and is not managed by eg-pair-1
-       found controllerName: some-other-controller
+[OK]   GatewayClass tr-1 not found
+[FAIL] GatewayClass tr-1 exists, owner: eg-pair-2 (different release)
+       Two controllers cannot share a GatewayClass name.
+       Options:
+         Choose a different pair index: gwp pair install --id 3
+         Remove the conflicting resource: kubectl delete gatewayclass tr-1
 ```
+
+#### controllerName uniqueness
+
+Each EG controller uses a `controllerName` derived from its GatewayClass name
+(`gateway.envoyproxy.io/tr-{i}`). This value is baked into the
+`envoy-gateway-config` ConfigMap in the system namespace.
+
+If two controllers share a `controllerName`, each one watches all GatewayClasses
+cluster-wide and tries to reconcile GatewayClasses that belong to the other
+controller. Since each controller's cache only covers its own two namespaces,
+it cannot find the other pair's EnvoyProxy and logs continuously:
+
+```
+failed to find envoyproxy tr-system-2/eg for GatewayClass tr-2:
+unable to get: tr-system-2/eg because of unknown namespace for the cache
+```
+
+The scan: list all ConfigMaps named `envoy-gateway-config` across all
+namespaces and extract the `controllerName` field. This requires only
+`get configmap` across namespaces, which the kubeconfig user typically has.
+
+```
+[OK]   controllerName gateway.envoyproxy.io/tr-1 not in use by any other controller
+[FAIL] controllerName gateway.envoyproxy.io/tr-1 already in use
+       ConfigMap envoy-gateway-config in namespace tr-system-3 uses the same value.
+       This pair would conflict with the controller in tr-system-3.
+       Resolve by choosing a different pair id (--id 4) or removing the
+       conflicting pair first.
+```
+
+#### ClusterRole names
+
+`eg-pair-tr-{i}-tokenreviews` and `eg-pair-tr-{i}-gateway-controller` must not
+exist unless owned by this release. Stale ClusterRoles from a previously failed
+or force-deleted install indicate unclean state. They are not a hard block (RBAC
+is additive and the new install will overwrite them) but they signal that a
+previous uninstall did not clean up correctly.
+
+```
+[OK]   ClusterRole eg-pair-tr-1-tokenreviews not found
+[WARN] ClusterRole eg-pair-tr-1-tokenreviews exists without a matching Helm release
+       This is stale state from a previous install. The new install will overwrite it.
+       To clean up manually: kubectl delete clusterrole eg-pair-tr-1-tokenreviews
+```
+
+#### Summary table
+
+| Resource | Conflict type | Action on conflict |
+|---|---|---|
+| `GatewayClass tr-{i}` | Hard block | Different id or delete the existing resource |
+| `controllerName tr-{i}` | Hard block | Different id or remove the conflicting controller |
+| `ClusterRole eg-pair-tr-{i}-*` | Soft warn | New install overwrites; stale state only |
+| `ClusterRoleBinding eg-pair-tr-{i}-*` | Soft warn | Same |
 
 ### 7. Namespace conflicts (if `--pair <index>` passed)
 

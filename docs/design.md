@@ -238,6 +238,14 @@ this layer there are two sub-scopes:
 N pairs in one cluster means N GatewayClasses and N sets of ClusterRoles.
 The naming scheme (`eg-pair-tr-{i}-*`) prevents collisions.
 
+`gwp preflight` checks all of these before install. The two hard blocks are
+a GatewayClass name conflict and a `controllerName` conflict. The
+`controllerName` check scans all `envoy-gateway-config` ConfigMaps in the
+cluster to detect whether another controller is already using
+`gateway.envoyproxy.io/tr-{i}`. Both blocks must be resolved before
+`gwp pair install` will proceed. See `docs/cli.md` for the full check
+specification and output format.
+
 **Namespace-scoped (pair's two namespaces):**
 
 Everything else in the pair is namespace-scoped and naturally isolated because
