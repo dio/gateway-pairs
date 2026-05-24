@@ -1,15 +1,30 @@
 # CLI Design
 
 A single binary, `gwp`, that wraps the operational surface of gateway-pairs:
-preflight checks, CRD lifecycle management, pair install/status/teardown,
-and post-install verification. It is a tool for operators and CI pipelines,
-not a replacement for Helm -- Helm is still the install mechanism for the
-`eg-pair` chart. `gwp` handles what Helm cannot: detection, validation,
-ordering, and readable cluster state.
+CRD lifecycle management, pair install/status/teardown, and post-install
+verification. It is a tool for operators and CI pipelines, not a replacement
+for Helm -- Helm is still the install mechanism for the `eg-pair` chart.
+`gwp` handles what Helm cannot: per-pair value derivation, provider-managed
+CRD detection, and readable cluster state.
 
-Every release of `gwp` ships with the charts and CRD manifests embedded
-inside the binary. Operators do not need Helm repos, OCI registry access,
-or separate chart downloads to install. They need one binary and `kubectl`.
+Every release of `gwp` ships with the charts and pre-rendered CRD YAML embedded
+inside the binary. Operators do not need Helm repos, OCI registry access, or
+separate chart downloads to install. They need one binary, `helm`, and `kubectl`.
+
+## Implementation status
+
+| Command | Status |
+|---|---|
+| `gwp version` | implemented |
+| `gwp crds detect` | implemented |
+| `gwp crds install` | implemented |
+| `gwp pair install` | implemented |
+| `gwp pair status` | implemented |
+| `gwp pair info` | implemented |
+| `gwp pair list` | implemented |
+| `gwp pair delete` | implemented |
+| `gwp preflight` | planned |
+| `gwp pair verify` | planned |
 
 ---
 
@@ -1154,21 +1169,23 @@ gwp pair delete 4
 
 ---
 
-## Implementation notes (for when we build this)
+## Implementation notes
 
 ### Language and package layout
 
-Go. The k8s client machinery already in `e2e/suite_test.go` becomes a proper
-library under `internal/`:
+Go. Package layout:
 
 ```
 cmd/gwp/main.go
 internal/
-  kube/        client factory, context validation, managedFields helpers
-  crd/         CRD detection, install, version comparison
-  pair/         pair status, install orchestration, verify, delete, list
-  preflight/   preflight check runners (RBAC, server version, conflicts)
-  helm/        exec-based Helm wrapper (upgrade --install, uninstall, template)
+  kube/        exec kubectl wrapper (dio/sh), Outputter interface
+  helm/        exec helm wrapper (dio/sh), Runner interface
+  cli/         cobra command tree
+  fake/        in-process kubectl/helm fakes for unit tests
+names/         name derivation from prefix+index (no I/O, no deps)
+crd/           CRD detect + install (uses internal/kube)
+pair/          pair install / delete / status / list / info (uses internal/kube + internal/helm)
+gwpapi/        public Go embedding API (single import point for embedders)
 ```
 
 ### Flag conventions
@@ -1212,13 +1229,14 @@ between minor versions. The exec model is simpler and matches the Makefile.
 
 For `gwp pair install`, the flow is:
 
-1. `helm upgrade --install eg-pair-{i} ... --wait --timeout 120s`
-2. poll for controller Deployment Available (client-go)
-3. poll for GatewayClass Accepted (dynamic client)
-4. poll for Gateway Programmed (dynamic client)
-5. poll for Envoy proxy Deployment available (client-go)
+1. extract embedded `eg-pair` chart to a temp dir
+2. `helm upgrade --install eg-pair-{i} ... --skip-crds --timeout 5m` (no --wait)
+3. poll for controller Deployment Available (exec kubectl jsonpath)
+4. poll for GatewayClass Accepted (exec kubectl jsonpath)
 
-Steps 2-5 are done in Go with `client-go`, not by shelling to `kubectl`.
+Polling uses exec kubectl with jsonpath, not client-go or the dynamic client.
+This keeps the dependency surface minimal -- no `k8s.io/*` imports in the
+`pair` package.
 
 ### CRD detection: Go implementation
 
@@ -1282,7 +1300,7 @@ func DetectGatewayAPICRDs(ctx context.Context, client dynamic.Interface) (Detect
 }
 ```
 
-### CRD install: helm template piped to kubectl apply --server-side
+### CRD install: embedded bytes piped to kubectl apply --server-side
 
 The `helm template | kubectl apply --server-side` chain avoids Helm's 1 MB
 release secret annotation limit. In Go, this is two exec.Command calls with

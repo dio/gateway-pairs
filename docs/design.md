@@ -359,7 +359,7 @@ Gateways reference the same EG version and run in the same cluster.
 ## Resources by scope
 |---|---|---|
 | Helm release Secret | tr-system-{i} | Helm |
-| Namespace tr-system-{i} | cluster | `--create-namespace` + chart resource |
+| Namespace tr-system-{i} | cluster | `--create-namespace` (release NS; not a chart resource) |
 | Namespace tr-dataplane-{i} | cluster | chart template |
 | GatewayClass tr-{i} | cluster-scoped | chart template |
 | ClusterRole/Binding tokenreviews | cluster-scoped | chart template |
@@ -376,9 +376,9 @@ Gateways reference the same EG version and run in the same cluster.
 | HTTPRoutes | tr-dataplane-{i} | operator-managed |
 
 > `gateway.create` and `envoyProxy.create` are both `false` by default.
-> The chart is a pure infrastructure scaffold. For single-tier testing or
-> e2e validation, pass `--set gateway.create=true --set envoyProxy.create=true`
-> to get a minimal running proxy without applying Layer 3 manifests.
+> The chart is a pure infrastructure scaffold. Use `gwp pair install` or
+> `make pair-install` -- both inject the required `controllerName` and
+> `watch.namespaces` flags automatically.
 
 ---
 
@@ -495,7 +495,7 @@ Both `tr-system-1` and `tr-dataplane-1` terminate cleanly after this sequence.
 
 ---
 
-## Subchart migration (in progress)
+## Subchart migration (COMPLETE)
 
 `eg-pair` depends on `gateway-helm` as a Helm subchart. This means certgen,
 RBAC, the controller Deployment, Service, and ServiceAccount are all owned and
@@ -505,7 +505,7 @@ controller layer.
 
 `eg-pair` adds on top:
 
-- The two-namespace declarations (`tr-system-{i}`, `tr-dataplane-{i}`)
+- The dataplane namespace declaration (`tr-dataplane-{i}`); `tr-system-{i}` is the Helm release namespace, created by `--create-namespace` and intentionally absent from chart templates -- declaring it in both places causes an ownership conflict on install (`namespace tr-system-{i} already exists`)
 - `GatewayClass tr-{i}` with unique `controllerName`
 - The infra-manager RBAC extension (beyond what upstream provides)
 - Optional default `EnvoyProxy` + `Gateway` (`create: false` by default)
