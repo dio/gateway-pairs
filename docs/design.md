@@ -4,7 +4,7 @@
 
 `gateway-pairs` deploys N isolated Envoy Gateway controller+dataplane pairs
 inside a single Kubernetes cluster. Each pair is one Helm release of `eg-pair`.
-CRDs are installed once cluster-wide via `eg-crds` + `hack/install-crds.sh`.
+CRDs are installed once cluster-wide via `gwp crds install`.
 
 ---
 
@@ -352,10 +352,14 @@ Gateway Namespace Mode is **not supported** with Merged Gateways.
 | User-installed, same channel | server-side apply upgrades cleanly |
 | Channel mismatch (experimental → standard) | block -- check live objects first |
 
-Single version source: `gateway-crds-helm`. EG v1.8.0 bundles Gateway API
-**v1.5.1**. Install via `helm template | kubectl apply --server-side` (never
-`helm install` -- Helm 1 MB release Secret limit breaks on large CRD bundles).
+| Scenario | Action |
+|---|---|
+| Fresh cluster | `gwp crds install` |
+| Provider-managed Gateway API (GKE, AKS) | `gwp crds install --skip-gateway-api-crds` |
+| User-installed, same channel | `gwp crds install` (server-side apply is idempotent) |
+| Channel mismatch (experimental → standard) | `gwp crds detect` first -- block if live objects exist |
 
-Provider-managed detection: `managedFields[*].manager`. Known managers:
-`gke-networking-controller`, `gke-gateway-api`, `aks-gateway-api-controller`,
-`addon-manager`.
+`gwp crds install` uses `helm template | kubectl apply --server-side` internally.
+Never `helm install` -- Helm's 1 MB release Secret limit breaks on large CRD bundles.
+`gwp crds detect` inspects `managedFields[*].manager` to identify provider-managed
+installs and reports compatibility against the bundled Gateway API version.
