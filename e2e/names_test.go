@@ -10,20 +10,20 @@ import (
 // pairNames derives all resource names for one pair from the configured prefix.
 // PAIR_PREFIX env var (default "tr") controls all names.
 //
-// In GatewayNamespace mode EG places the proxy in the Gateway's namespace.
-// The Gateway lives in SystemNS, so controller + proxy + tenant HTTPRoutes
-// all live in SystemNS. There is no separate dataplane namespace.
+// One namespace per pair: systemNS is both the Helm release namespace and the
+// workload namespace. Install with:
+//   helm upgrade --install eg-pair-{i} ./charts/eg-pair \
+//     --namespace {systemNS} --create-namespace \
+//     --set pair.index={i}
 //
 // Naming:
-//   releaseNS  = {prefix}-release-{index}  (Helm release Secret only)
-//   systemNS   = {prefix}-system-{index}   (everything else)
+//   systemNS     = {prefix}-system-{index}   (everything: release Secret + workloads)
 //   gatewayClass = {prefix}-{index}
 type pairNames struct {
-	prefix    string
-	index     int
-	ReleaseNS string
-	SystemNS  string
-	GWClass   string
+	prefix   string
+	index    int
+	SystemNS string
+	GWClass  string
 }
 
 func namesFor(index int) pairNames {
@@ -35,14 +35,15 @@ func namesFor(index int) pairNames {
 	if pfx != "" {
 		sep = "-"
 	}
-	p := pairNames{prefix: pfx, index: index}
-	p.ReleaseNS = fmt.Sprintf("%s%srelease-%d", pfx, sep, index)
-	p.SystemNS = fmt.Sprintf("%s%ssystem-%d", pfx, sep, index)
-	p.GWClass = fmt.Sprintf("%s%s%d", pfx, sep, index)
-	return p
+	return pairNames{
+		prefix:   pfx,
+		index:    index,
+		SystemNS: fmt.Sprintf("%s%ssystem-%d", pfx, sep, index),
+		GWClass:  fmt.Sprintf("%s%s%d", pfx, sep, index),
+	}
 }
 
-// helmSetPrefix returns the --set flags for pair.namePrefix.
+// helmSetPrefix returns --set flags for pair.namePrefix.
 func (p pairNames) helmSetPrefix() []string {
 	return []string{"--set", fmt.Sprintf("pair.namePrefix=%s", p.prefix)}
 }

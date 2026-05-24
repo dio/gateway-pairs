@@ -1,7 +1,7 @@
 Pair {{ .Values.pair.index }} deployed.
 
-System namespace: {{ include "eg-pair.systemNamespace" . }}
-GatewayClass:     {{ include "eg-pair.gatewayClassName" . }}
+Namespace:    {{ include "eg-pair.systemNamespace" . }}
+GatewayClass: {{ include "eg-pair.gatewayClassName" . }}
 
 Wait for the controller:
   kubectl rollout status deployment/envoy-gateway \
@@ -12,7 +12,4 @@ Check Gateway status:
     -n {{ include "eg-pair.systemNamespace" . }}
 
 Tenants deploy HTTPRoutes in {{ include "eg-pair.systemNamespace" . }}
-(same namespace as the Gateway):
-  parentRefs:
-  - name: {{ .Values.gateway.name }}
-    namespace: {{ include "eg-pair.systemNamespace" . }}
+(same namespace as the Gateway -- allowedRoutes: from: Same).

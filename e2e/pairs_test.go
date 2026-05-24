@@ -141,7 +141,7 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
 
 func (s *gatewayPairsSuite) Test10_DeletePair2() {
 	n := namesFor(2)
-	s.T().Logf("deleting eg-pair-2 from %s", n.ReleaseNS)
+	s.T().Logf("deleting eg-pair-2 from %s", n.SystemNS)
 
 	// Delete the Gateway first so EG deprovisions the proxy Deployment and
 	// removes its finalizer before we remove the controller. Without this the
@@ -158,11 +158,11 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 		return err == nil && !strings.Contains(out, "eg")
 	}, 90*time.Second, 3*time.Second, "proxy Deployment not removed after Gateway delete")
 
-	s.mustHelm("uninstall", "eg-pair-2", "--namespace", n.ReleaseNS)
+	s.mustHelm("uninstall", "eg-pair-2", "--namespace", n.SystemNS)
 
 	// Delete namespaces explicitly -- the system NS is a hook resource
 	// not tracked for helm uninstall deletion.
-	for _, ns := range []string{n.ReleaseNS, n.SystemNS} {
+	for _, ns := range []string{n.SystemNS, n.SystemNS} {
 		s.kubectl("delete", "namespace", ns, "--ignore-not-found", "--wait=false") //nolint:errcheck
 	}
 
@@ -230,12 +230,12 @@ func (s *gatewayPairsSuite) Test12_ReinstallPair2() {
 func (s *gatewayPairsSuite) installPair(index int) {
 	n := namesFor(index)
 	release := fmt.Sprintf("eg-pair-%d", index)
-	s.T().Logf("installing %s (release ns: %s)", release, n.ReleaseNS)
+	s.T().Logf("installing %s (release ns: %s)", release, n.SystemNS)
 
 	args := []string{
 		"upgrade", "--install", release,
 		s.chartPath("eg-pair"),
-		"--namespace", n.ReleaseNS,
+		"--namespace", n.SystemNS,
 		"--create-namespace",
 		"--set", fmt.Sprintf("pair.index=%d", index),
 		"--skip-crds",

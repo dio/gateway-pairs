@@ -62,7 +62,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 			n := namesFor(i)
 			release := fmt.Sprintf("eg-pair-%d", i)
 			exec.Command("helm", "--kube-context", ktx, //nolint:errcheck
-				"uninstall", release, "--namespace", n.ReleaseNS,
+				"uninstall", release, "--namespace", n.SystemNS,
 				"--ignore-not-found",
 			).Run()
 		}
@@ -72,7 +72,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 		// indefinitely. Delete all three namespaces for each pair unconditionally.
 		for i := 1; i <= 3; i++ {
 			n := namesFor(i)
-			for _, ns := range []string{n.ReleaseNS, n.SystemNS} {
+			for _, ns := range []string{n.SystemNS, n.SystemNS} {
 				exec.Command("kubectl", "--context", ktx, //nolint:errcheck
 					"delete", "namespace", ns, "--ignore-not-found", "--wait=false",
 				).Run()
@@ -82,7 +82,7 @@ func (s *pairsBaseSuite) SetupSuite() {
 		deadline := time.Now().Add(2 * time.Minute)
 		for _, i := range []int{1, 2, 3} {
 			n := namesFor(i)
-			for _, ns := range []string{n.ReleaseNS, n.SystemNS} {
+			for _, ns := range []string{n.SystemNS, n.SystemNS} {
 				ns := ns
 				for time.Now().Before(deadline) {
 					out, err := s.kubectl("get", "namespace", ns)

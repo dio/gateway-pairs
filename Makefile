@@ -97,7 +97,7 @@ crds-install:
 ## pair-install: install one eg-pair release (PAIR=1, PAIR_PREFIX=tr by default)
 pair-install:
 	helm --kube-context $(KTX) upgrade --install eg-pair-$(PAIR) ./charts/eg-pair \
-	  --namespace $(RELEASE_NS) --create-namespace \
+	  --namespace $(SYSTEM_NS) --create-namespace \
 	  --set pair.index=$(PAIR) \
 	  --set pair.namePrefix=$(PAIR_PREFIX) \
 	  --skip-crds \

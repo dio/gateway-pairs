@@ -1,3 +1,11 @@
+{{/*
+The system namespace is the release namespace passed via --namespace at install.
+Declaring it here as a normal chart resource registers it in the Helm release
+so helm uninstall removes it. Helm's --create-namespace creates it first
+without ownership annotations; this template patches those annotations in.
+
+No hook. Helm removes this on uninstall alongside all other tracked resources.
+*/}}
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -6,7 +14,3 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     eg-pair: {{ .Values.pair.index | quote }}
     eg-role: system
-  annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation

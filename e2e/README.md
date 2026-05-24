@@ -39,9 +39,9 @@ Always use `-count=1`. Cached results skip the real cluster run.
 
 `PAIR_PREFIX` (default: `tr`) controls all derived names:
 
-| PAIR_PREFIX | index | ReleaseNS       | SystemNS       | DataplaneNS       | GatewayClass |
-|-------------|-------|-----------------|----------------|-------------------|--------------|
-| `tr`        | 1     | tr-release-1    | tr-system-1    | tr-dataplane-1    | tr-1         |
+| PAIR_PREFIX | index | SystemNS (= release NS) | GatewayClass |
+|-------------|-------|-------------------------|--------------|
+| `tr`        | 1     | tr-system-1             | tr-1         |
 | `tars`      | 1     | tars-release-1  | tars-system-1  | tars-dataplane-1  | tars-1       |
 | `""`        | 1     | release-1       | system-1       | dataplane-1       | 1            |
 
