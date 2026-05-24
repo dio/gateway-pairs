@@ -69,7 +69,7 @@ brews:
       email: dio@rockybars.com
     homepage: "https://github.com/dio/gateway-pairs"
     description: "Deploy Envoy Gateway as isolated controller+dataplane pairs in a Kubernetes cluster"
-    license: "MIT"
+    license: "Apache-2.0"
     install: |
       bin.install "gwp"
     test: |
