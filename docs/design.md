@@ -82,20 +82,45 @@ on uninstall.
 
 ## Namespace naming
 
-All names derive from `pair.namePrefix`, `pair.index`, and `pair.nameSuffix`.
+All names derive from three chart values: `pair.namePrefix`, `pair.index`, and
+`pair.nameSuffix`.
 
-Rules:
-- `namePrefix`: auto-appended `-` if non-empty and not already ending with one.
-- `nameSuffix`: appended as-is (caller controls separator).
+**Rules:**
+- `namePrefix`: auto-appends `-` if non-empty and not already ending with one.
+- `nameSuffix`: appended as-is -- the caller controls the separator (including none).
+  Useful for environment (`prod`, `staging`) or region (`eu-west`) identifiers.
 - `nameSuffix` empty + `index > 0` → suffix defaults to `-{index}`.
 - `nameSuffix` empty + `index == 0` → no suffix (single/unnamed pair).
-- GatewayClass name omits the role fragment -- just prefix+suffix.
+- GatewayClass name omits the role fragment (`system`, `dataplane`) -- just prefix+suffix.
+
+**Examples:**
 
 | namePrefix | index | nameSuffix | systemNS | dataplaneNS | GatewayClass |
 |---|---|---|---|---|---|
 | `tr` | `1` | `""` | `tr-system-1` | `tr-dataplane-1` | `tr-1` |
 | `tars` | `1` | `""` | `tars-system-1` | `tars-dataplane-1` | `tars-1` |
 | `tars` | `0` | `""` | `tars-system` | `tars-dataplane` | `tars` |
+| `tars` | `0` | `-prod` | `tars-system-prod` | `tars-dataplane-prod` | `tars-prod` |
+| `tars` | `0` | `-eu-west` | `tars-system-eu-west` | `tars-dataplane-eu-west` | `tars-eu-west` |
+| `tars` | `1` | `1` | `tars-system1` | `tars-dataplane1` | `tars-1` |
+| `""` | `1` | `""` | `system-1` | `dataplane-1` | `1` |
+
+The `nameSuffix` field gives full control when the default `index`-based naming
+doesn't fit. Common patterns:
+
+```bash
+# Numeric pair (default)
+--set pair.index=1
+
+# Environment-named pair
+--set pair.namePrefix=tars --set pair.index=0 --set pair.nameSuffix=-prod
+
+# Region-named pair
+--set pair.namePrefix=tars --set pair.index=0 --set pair.nameSuffix=-eu-west
+
+# Custom prefix only (no tars)
+--set pair.namePrefix=myapp --set pair.index=1
+```
 
 ---
 
