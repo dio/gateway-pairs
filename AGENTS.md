@@ -8,6 +8,10 @@ CRDs are installed once via `eg-crds` + `hack/install-crds.sh`.
 
 Load these when working in this repo:
 
+- **envoy-gateway-namespace-mode** (`/.agents/skills/envoy-gateway-namespace-mode/SKILL.md`)
+  Gateway Namespace Mode mechanics: Helm config, RBAC shape, JWT vs mTLS auth shift,
+  watch mode options, proxy placement, uninstall sequence, Merged Gateways incompatibility.
+
 - **gateway-pairs-e2e** (`/.agents/skills/gateway-pairs-e2e/SKILL.md`)
   Running, debugging, and extending the k3d e2e suite.
 
