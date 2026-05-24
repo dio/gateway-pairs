@@ -1,25 +1,10 @@
-{{- $sysNS := include "eg-pair.systemNamespace" . }}
-{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
+{{- $dpNS := include "eg-pair.dataplaneNamespace" . }}
 
 {{/*
-System namespace: also the Helm release namespace (--namespace at install).
-Declared here so Helm tracks it and removes it on uninstall.
-Holds: release Secret, EG controller, Gateway, EnvoyProxy CR, proxy (generated).
-*/}}
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {{ $sysNS }}
-  labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    eg-pair: {{ .Values.pair.index | quote }}
-    eg-role: system
----
-{{/*
-Dataplane namespace: chart-declared, Helm-owned, removed on uninstall.
-Holds: tenant HTTPRoutes (and backends).
-The Gateway in the system namespace uses allowedRoutes: from: Selector
-targeting this namespace so tenants can attach routes from here.
+Only the dataplane namespace is declared here as a chart resource.
+The system namespace (tr-system-{i}) is created by --create-namespace at
+install time and is owned by Helm as the release namespace.
+Declaring it here too causes an ownership conflict on install.
 */}}
 apiVersion: v1
 kind: Namespace
@@ -29,3 +14,4 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     eg-pair: {{ .Values.pair.index | quote }}
     eg-role: dataplane
+    tr/gateway-routes: "true"

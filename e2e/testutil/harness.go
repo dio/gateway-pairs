@@ -49,7 +49,8 @@ func (h *Harness) MustHelm(args ...string) {
 	h.T.Helper()
 	a := append([]string{"--kube-context", h.Ktx}, args...)
 	if err := sh.Run(h.Ctx, "helm", a...); err != nil {
-		h.T.Fatalf("helm %v: %v", args, err)
+		h.T.Errorf("helm %v: %v", args, err)
+		h.T.FailNow()
 	}
 }
 

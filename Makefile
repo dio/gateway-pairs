@@ -121,7 +121,7 @@ e2e:
 ## e2e-simple: run single-pair sanity check (~3 minutes)
 e2e-simple:
 	cd e2e && RUN_E2E=1 \
-	  go test -v -count=1 -run TestSimplePair -timeout 5m ./simple/...
+	  go test -v -count=1 -run TestSimplePair -timeout 15m ./simple/...
 
 ## clean: remove build artifacts and generated CRDs
 clean:

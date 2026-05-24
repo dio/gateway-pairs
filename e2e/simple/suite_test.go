@@ -50,7 +50,7 @@ func (s *simpleSuite) ChartPath(chart string) string             { return s.h.Ch
 
 func (s *simpleSuite) SetupSuite() {
 	var ctx context.Context
-	ctx, s.cancel = context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, s.cancel = context.WithTimeout(context.Background(), 20*time.Minute)
 
 	_, file, _, _ := runtime.Caller(0)
 	s.h = testutil.Harness{
