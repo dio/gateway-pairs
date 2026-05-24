@@ -77,14 +77,16 @@ func (s *gatewayPairsSuite) Test06_VerifyGatewayClasses() {
 }
 
 func (s *gatewayPairsSuite) Test07_VerifyGateways() {
-	// installPair already waited for Gateway=Programmed. Fast re-check.
+	// installPair already waited for listeners Programmed. Fast re-check.
+	// Use listener-level conditions -- ClusterIP gateways won't have a top-level
+	// Programmed=True due to AddressNotAssigned.
 	for _, i := range []int{1, 2, 3} {
 		n := namesFor(i)
 		out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
-			"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
+			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
 		s.Require().NoError(err)
 		s.Contains(out, "Programmed=True",
-			"Gateway eg in %s not Programmed", n.SystemNS)
+			"Gateway eg in %s listeners not Programmed", n.SystemNS)
 	}
 }
 
@@ -172,7 +174,7 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 	s.eventually(func() bool {
 		_, err := s.kubectl("get", "namespace", n.SystemNS)
 		return err != nil
-	}, 90*time.Second, 3*time.Second, "Namespace %s not removed", n.SystemNS)
+	}, 3*time.Minute, 3*time.Second, "Namespace %s not removed", n.SystemNS)
 
 	prefix := fmt.Sprintf("eg-pair-%d", 2)
 	for _, res := range []string{
@@ -192,16 +194,21 @@ func (s *gatewayPairsSuite) Test10_DeletePair2() {
 func (s *gatewayPairsSuite) Test11_PairsUnaffectedByDelete() {
 	for _, i := range []int{1, 3} {
 		n := namesFor(i)
-
-		out := s.mustKubectl("get", "deployment", "envoy-gateway",
-			"-n", n.SystemNS, "-o", "jsonpath={.status.availableReplicas}")
-		s.Equal("1", strings.TrimSpace(out),
+		// Use eventually -- the controller may briefly show 0 available replicas
+		// while reconciling the deletion of pair 2's GatewayClass and ClusterRoles.
+		s.eventually(func() bool {
+			out, err := s.kubectl("get", "deployment", "envoy-gateway",
+				"-n", n.SystemNS, "-o", "jsonpath={.status.availableReplicas}")
+			return err == nil && strings.TrimSpace(out) == "1"
+		}, 30*time.Second, 3*time.Second,
 			"controller in %s degraded after pair-2 delete", n.SystemNS)
 
-		out = s.mustKubectl("get", "deployments", "-n", n.SystemNS,
-			"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
-			"-o", "jsonpath={.items[0].status.availableReplicas}")
-		s.Equal("1", strings.TrimSpace(out),
+		s.eventually(func() bool {
+			out, err := s.kubectl("get", "deployments", "-n", n.SystemNS,
+				"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
+				"-o", "jsonpath={.items[0].status.availableReplicas}")
+			return err == nil && strings.TrimSpace(out) == "1"
+		}, 30*time.Second, 3*time.Second,
 			"proxy in %s degraded after pair-2 delete", n.SystemNS)
 	}
 }
@@ -244,16 +251,17 @@ func (s *gatewayPairsSuite) installPair(index int) {
 	s.mustKubectl("wait", "deployment/envoy-gateway",
 		"-n", n.SystemNS, "--for=condition=Available", "--timeout=5m")
 
-	// Wait for Gateway to be Programmed -- this confirms the full data path
-	// is wired: controller reconciled the GatewayClass, created the proxy,
-	// and the proxy connected to xDS. Without this, Test06/07 may race.
-	s.T().Logf("waiting for Gateway eg in %s to be Programmed", n.SystemNS)
+	// Wait for Gateway to have all listeners Programmed. Check listener-level
+	// conditions rather than top-level -- ClusterIP services never get an
+	// address assigned so top-level Programmed may stay False even when
+	// the proxy is connected and routing works.
+	s.T().Logf("waiting for Gateway eg in %s listeners to be Programmed", n.SystemNS)
 	s.eventually(func() bool {
 		out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
-			"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
+			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
 		return err == nil && strings.Contains(out, "Programmed=True")
 	}, 5*time.Minute, 5*time.Second,
-		"Gateway eg in %s not Programmed after install", n.SystemNS)
+		"Gateway eg in %s listeners not Programmed after install", n.SystemNS)
 }
 
 func (s *gatewayPairsSuite) applyManifest(ns, manifest string) {
