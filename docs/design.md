@@ -44,7 +44,7 @@ its own EnvoyProxy explicitly. This is the most flexible model and is what
 
 ## Case study: `tiered-router-eg`
 
-Reference: `~/src/dio/transit/integrations/tiered-router-eg/k8s/`
+Reference: `https://github.com/dio/transit/tree/main/integrations/tiered-router-eg/k8s/`
 
 This integration runs three proxy tiers under one EG controller in one pair:
 
