@@ -85,6 +85,8 @@ and troubleshooting.
 The only coupling from Layer 3 to Layer 2 is `gatewayClassName: tr-{i}` in each
 Gateway manifest. Use `gwp pair info <i>` for the exact values.
 
+See [examples/](examples/) for ready-to-apply Layer 3 manifests.
+
 ## e2e
 
 ```bash

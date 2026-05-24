@@ -1,0 +1,20 @@
+# EnvoyProxy for pair 1, single-tier.
+# Lives in the dataplane namespace alongside the Gateway.
+# The Gateway references this via infrastructure.parametersRef (same namespace).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: proxy
+  namespace: tr-dataplane-1
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: proxy          # stable, predictable Service name
+        type: ClusterIP
+      envoyDeployment:
+        replicas: 1
+        pod:
+          labels:
+            app: proxy

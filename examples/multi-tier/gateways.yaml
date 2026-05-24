@@ -1,0 +1,49 @@
+# L1 Gateway -- faces inbound traffic.
+# parametersRef → EnvoyProxy/l1 in the same namespace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: l1
+  namespace: tr-dataplane-1
+spec:
+  gatewayClassName: tr-1    # from: gwp pair info 1 → gatewayClassName
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: l1
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            tr/gateway-routes: "true"
+---
+# L2 Gateway -- handles backend routing.
+# parametersRef → EnvoyProxy/l2 in the same namespace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: l2
+  namespace: tr-dataplane-1
+spec:
+  gatewayClassName: tr-1
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: l2
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            tr/gateway-routes: "true"

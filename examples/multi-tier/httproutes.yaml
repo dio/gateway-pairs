@@ -1,0 +1,43 @@
+# L1 HTTPRoute -- routes inbound requests to the L2 proxy Service.
+# In a real deployment this might route based on host, path, or headers.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l1-to-l2
+  namespace: tr-dataplane-1
+spec:
+  parentRefs:
+  - name: l1                 # attaches to the L1 Gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: l2               # routes to the L2 proxy Service (envoyService.name: l2)
+      port: 80
+---
+# L2 HTTPRoute -- routes to actual backend services.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l2-to-backend
+  namespace: tr-dataplane-1
+spec:
+  parentRefs:
+  - name: l2                 # attaches to the L2 Gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api
+    backendRefs:
+    - name: api-service      # your backend Service
+      port: 8080
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: default-service
+      port: 8080

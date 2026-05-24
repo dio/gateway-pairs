@@ -1,0 +1,41 @@
+# L1 edge proxy -- handles inbound traffic, routes to L2.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: l1
+  namespace: tr-dataplane-1
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: l1             # stable Service name; used in L2's upstream cluster config
+        type: ClusterIP
+        labels:
+          tier: l1
+      envoyDeployment:
+        replicas: 2
+        pod:
+          labels:
+            tier: l1
+---
+# L2 backend proxy -- handles backend routing per service/shard.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: l2
+  namespace: tr-dataplane-1
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: l2
+        type: ClusterIP
+        labels:
+          tier: l2
+      envoyDeployment:
+        replicas: 1
+        pod:
+          labels:
+            tier: l2

@@ -1,0 +1,25 @@
+# Gateway for pair 1, single-tier.
+# gatewayClassName must match the pair's GatewayClass (from: gwp pair info 1).
+# infrastructure.parametersRef points at the EnvoyProxy in the same namespace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: proxy
+  namespace: tr-dataplane-1
+spec:
+  gatewayClassName: tr-1    # from: gwp pair info 1 → gatewayClassName
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: proxy            # matches envoyproxy.yaml metadata.name
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            tr/gateway-routes: "true"   # label set on tr-dataplane-1 by eg-pair chart
