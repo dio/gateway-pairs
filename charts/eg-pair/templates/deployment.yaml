@@ -68,9 +68,15 @@ spec:
         - name: config
           mountPath: /config
           readOnly: true
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       volumes:
       - name: config
         configMap:
           name: envoy-gateway-config
+      - name: certs
+        secret:
+          secretName: envoy-gateway
       securityContext:
         runAsNonRoot: true

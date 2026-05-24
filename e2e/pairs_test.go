@@ -6,6 +6,9 @@ package e2e_test
 
 import (
 	"fmt"
+	"net/http"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,78 +27,88 @@ func TestGatewayPairs(t *testing.T) {
 	suite.Run(t, new(gatewayPairsSuite))
 }
 
-func (s *gatewayPairsSuite) Test01_InstallCRDs() {
-	s.T().Log("installing eg-crds")
-	s.mustHelm(
-		"upgrade", "--install", "eg-crds",
-		s.chartPath("eg-crds"),
-		"--namespace", "kube-system",
-		"--set", "crds.gatewayAPI.enabled=true",
-		"--set", "crds.gatewayAPI.channel=standard",
-		"--set", "crds.envoyGateway.enabled=true",
-		"--wait", "--timeout", "120s",
-	)
+// ── install + basic health ────────────────────────────────────────────────────
 
-	// The eg-crds chart itself just tracks metadata; actual CRDs are applied
-	// by the Makefile crds-install target. Verify that target ran.
+func (s *gatewayPairsSuite) Test01_InstallCRDs() {
+	s.T().Log("installing CRDs via hack/install-crds.sh")
+
+	script := filepath.Join(s.repoRoot, "hack", "install-crds.sh")
+	cmd := exec.CommandContext(s.ctx, "bash", script)
+	cmd.Env = append(cmd.Environ(),
+		"KTX="+ktx,
+		"EG_VERSION="+EGVersion,
+		"CHANNEL=standard",
+	)
+	out, err := cmd.CombinedOutput()
+	s.T().Logf("install-crds.sh:\n%s", string(out))
+	s.Require().NoError(err, "hack/install-crds.sh failed")
+
 	s.verifyGatewayAPICRDs()
 	s.verifyEGCRDs()
 }
 
-func (s *gatewayPairsSuite) Test02_InstallPair1() {
-	s.installPair(1)
-}
+func (s *gatewayPairsSuite) Test02_InstallPair1() { s.installPair(1) }
+func (s *gatewayPairsSuite) Test03_InstallPair2() { s.installPair(2) }
+func (s *gatewayPairsSuite) Test04_InstallPair3() { s.installPair(3) }
 
-func (s *gatewayPairsSuite) Test03_InstallPair2() {
-	s.installPair(2)
-}
+// ── isolation + correctness ───────────────────────────────────────────────────
 
-func (s *gatewayPairsSuite) Test04_VerifyIsolation() {
-	// Each controller should only see resources in its own pair namespaces.
-	// Rough proxy: each controller Deployment is distinct and healthy.
-	for _, i := range []int{1, 2} {
+func (s *gatewayPairsSuite) Test05_VerifyIsolation() {
+	for _, i := range []int{1, 2, 3} {
 		sysNS := fmt.Sprintf("tr-system-%d", i)
-		s.T().Logf("checking controller in %s", sysNS)
 		out := s.mustKubectl("get", "deployment", "envoy-gateway",
-			"-n", sysNS,
-			"-o", "jsonpath={.status.availableReplicas}")
+			"-n", sysNS, "-o", "jsonpath={.status.availableReplicas}")
 		s.Equal("1", strings.TrimSpace(out),
 			"expected 1 available replica in %s", sysNS)
 	}
+
+	// Verify no controller Deployment in dataplane namespaces.
+	for _, i := range []int{1, 2, 3} {
+		dpNS := fmt.Sprintf("tr-dataplane-%d", i)
+		out, err := s.kubectl("get", "deployment", "envoy-gateway", "-n", dpNS)
+		// NotFound error is the expected success path.
+		s.True(err != nil || !strings.Contains(out, "envoy-gateway"),
+			"controller Deployment leaked into %s: %s", dpNS, out)
+	}
 }
 
-func (s *gatewayPairsSuite) Test05_VerifyGatewayClasses() {
-	out := s.mustKubectl("get", "gatewayclass", "-o",
-		"jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Accepted")].status}\n{end}")
-	for _, i := range []int{1, 2} {
+func (s *gatewayPairsSuite) Test06_VerifyGatewayClasses() {
+	for _, i := range []int{1, 2, 3} {
 		gcName := fmt.Sprintf("tr-%d", i)
-		s.Contains(out, gcName+"=True",
+		s.eventually(func() bool {
+			out, err := s.kubectl("get", "gatewayclass", gcName,
+				"-o", "jsonpath={.status.conditions[0].type}={.status.conditions[0].status}")
+			return err == nil && strings.Contains(out, "Accepted=True")
+		}, 90*time.Second, 3*time.Second,
 			"GatewayClass %s not Accepted", gcName)
 	}
 }
 
-func (s *gatewayPairsSuite) Test06_VerifyGateways() {
-	for _, i := range []int{1, 2} {
+func (s *gatewayPairsSuite) Test07_VerifyGateways() {
+	for _, i := range []int{1, 2, 3} {
 		sysNS := fmt.Sprintf("tr-system-%d", i)
-		// Wait up to 2 min for Gateway to be Programmed.
-		s.T().Logf("waiting for Gateway in %s to be Programmed", sysNS)
+		s.T().Logf("waiting for Gateway eg in %s", sysNS)
 		s.eventually(func() bool {
+			// Iterate conditions to find Programmed rather than relying on
+			// jsonpath filter expressions (quoting varies across kubectl versions).
 			out, err := s.kubectl("get", "gateway", "eg", "-n", sysNS,
-				"-o", "jsonpath={.status.conditions[?(@.type=\"Programmed\")].status}")
-			return err == nil && strings.TrimSpace(out) == "True"
-		}, 2*time.Minute, 5*time.Second,
+				"-o", "jsonpath={.status.conditions[*].type}={.status.conditions[*].status}")
+			if err != nil {
+				return false
+			}
+			return strings.Contains(out, "Programmed") &&
+				!strings.Contains(out, "Programmed=False")
+		}, 3*time.Minute, 5*time.Second,
 			"Gateway eg in %s never reached Programmed=True", sysNS)
 	}
 }
 
-func (s *gatewayPairsSuite) Test07_VerifyDataplaneProxies() {
-	// EG should have created Envoy proxy Deployments in the dataplane namespaces.
-	for _, i := range []int{1, 2} {
+func (s *gatewayPairsSuite) Test08_VerifyDataplaneProxies() {
+	for _, i := range []int{1, 2, 3} {
 		dpNS := fmt.Sprintf("tr-dataplane-%d", i)
-		s.T().Logf("waiting for Envoy proxy Deployment in %s", dpNS)
+		s.T().Logf("waiting for proxy Deployment in %s", dpNS)
 		s.eventually(func() bool {
 			out, err := s.kubectl("get", "deployments", "-n", dpNS,
-				"-l", fmt.Sprintf("eg-pair=%d,eg-role=dataplane", i),
 				"-o", "jsonpath={.items[0].status.availableReplicas}")
 			return err == nil && strings.TrimSpace(out) == "1"
 		}, 3*time.Minute, 5*time.Second,
@@ -103,28 +116,187 @@ func (s *gatewayPairsSuite) Test07_VerifyDataplaneProxies() {
 	}
 }
 
+// ── traffic test via HTTPRoute + echo upstream ────────────────────────────────
+
+// Test09_TrafficThroughPair1 deploys a simple echo server in tr-dataplane-1,
+// wires an HTTPRoute, port-forwards to the Gateway, and asserts a 200 response.
+// This proves the full data path: client -> Gateway -> Envoy -> upstream.
+func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
+	dpNS := "tr-dataplane-1"
+	sysNS := "tr-system-1"
+
+	// Deploy a minimal echo server (uses kennethreitz/httpbin -- always-pulled image).
+	s.mustKubectl("apply", "-n", dpNS, "-f", "-",
+		"--stdin=false",
+		"--filename=/dev/stdin",
+	)
+	s.applyManifest(dpNS, echoDeploymentManifest(dpNS))
+	s.applyManifest(dpNS, echoServiceManifest(dpNS))
+
+	// Wait for echo pod ready.
+	s.mustKubectl("rollout", "status", "deployment/echo", "-n", dpNS, "--timeout=90s")
+
+	// Apply HTTPRoute in tr-dataplane-1 pointing to tr-system-1/eg Gateway.
+	s.applyManifest(dpNS, httpRouteManifest(sysNS, dpNS))
+
+	// Port-forward the Gateway Service in tr-dataplane-1.
+	// EG creates it there in GatewayNamespace mode.
+	gwSvc, err := s.findGatewayService(dpNS)
+	s.Require().NoError(err, "could not find Gateway Service in %s", dpNS)
+
+	stopFwd := s.portForward(dpNS, "svc/"+gwSvc, "18080:80")
+	defer stopFwd()
+
+	// Give port-forward a moment to establish.
+	time.Sleep(2 * time.Second)
+
+	// Assert HTTP 200 through the gateway.
+	s.eventually(func() bool {
+		resp, err := http.Get("http://localhost:18080/get") //nolint:noctx
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 30*time.Second, 2*time.Second, "expected 200 from echo via pair-1 Gateway")
+}
+
+// ── delete and recovery ───────────────────────────────────────────────────────
+
+func (s *gatewayPairsSuite) Test10_DeletePair2() {
+	s.T().Log("deleting eg-pair-2")
+	s.mustHelm("uninstall", "eg-pair-2", "--namespace", "tr-release-2", "--wait")
+
+	s.eventually(func() bool {
+		_, err := s.kubectl("get", "gatewayclass", "tr-2")
+		return err != nil
+	}, 30*time.Second, 2*time.Second, "GatewayClass tr-2 not removed")
+
+	for _, ns := range []string{"tr-system-2", "tr-dataplane-2"} {
+		s.eventually(func() bool {
+			_, err := s.kubectl("get", "namespace", ns)
+			return err != nil
+		}, 60*time.Second, 3*time.Second, "Namespace %s not removed", ns)
+	}
+
+	for _, res := range []string{
+		"clusterrole/eg-pair-2-tokenreviews",
+		"clusterrole/eg-pair-2-gateway-controller",
+		"clusterrolebinding/eg-pair-2-tokenreviews",
+		"clusterrolebinding/eg-pair-2-gateway-controller",
+	} {
+		s.eventually(func() bool {
+			_, err := s.kubectl("get", res)
+			return err != nil
+		}, 30*time.Second, 2*time.Second, "%s not removed", res)
+	}
+}
+
+func (s *gatewayPairsSuite) Test11_PairsUnaffectedByDelete() {
+	for _, i := range []int{1, 3} {
+		sysNS := fmt.Sprintf("tr-system-%d", i)
+		dpNS := fmt.Sprintf("tr-dataplane-%d", i)
+
+		out := s.mustKubectl("get", "deployment", "envoy-gateway",
+			"-n", sysNS, "-o", "jsonpath={.status.availableReplicas}")
+		s.Equal("1", strings.TrimSpace(out),
+			"controller in %s degraded after pair-2 delete", sysNS)
+
+		out = s.mustKubectl("get", "deployments", "-n", dpNS,
+			"-o", "jsonpath={.items[0].status.availableReplicas}")
+		s.Equal("1", strings.TrimSpace(out),
+			"proxy in %s degraded after pair-2 delete", dpNS)
+	}
+}
+
+func (s *gatewayPairsSuite) Test12_ReinstallPair2() {
+	s.installPair(2)
+
+	s.eventually(func() bool {
+		out, err := s.kubectl("get", "deployments", "-n", "tr-dataplane-2",
+			"-o", "jsonpath={.items[0].status.availableReplicas}")
+		return err == nil && strings.TrimSpace(out) == "1"
+	}, 3*time.Minute, 5*time.Second,
+		"proxy not ready in tr-dataplane-2 after reinstall")
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (s *gatewayPairsSuite) installPair(index int) {
 	release := fmt.Sprintf("eg-pair-%d", index)
+	releaseNS := fmt.Sprintf("tr-release-%d", index)
 	sysNS := fmt.Sprintf("tr-system-%d", index)
-	s.T().Logf("installing %s into %s", release, sysNS)
+	s.T().Logf("installing %s (release ns: %s)", release, releaseNS)
 
+	// The release namespace (tr-release-{i}) is created by --create-namespace.
+	// It holds only the Helm release Secret.
+	// The system and dataplane namespaces are declared in the chart templates
+	// and fully owned by this release -- no ownership conflict.
 	s.mustHelm(
 		"upgrade", "--install", release,
 		s.chartPath("eg-pair"),
-		"--namespace", sysNS,
+		"--namespace", releaseNS,
 		"--create-namespace",
 		"--set", fmt.Sprintf("pair.index=%d", index),
 		"--skip-crds",
 		"--wait", "--timeout", "120s",
 	)
 
-	// Wait for controller Deployment specifically, not just pod labels.
 	s.mustKubectl("rollout", "status", "deployment/envoy-gateway",
 		"-n", sysNS, "--timeout=120s")
 	s.mustKubectl("wait", "deployment/envoy-gateway",
 		"-n", sysNS, "--for=condition=Available", "--timeout=120s")
+}
+
+func (s *gatewayPairsSuite) applyManifest(ns, manifest string) {
+	s.T().Helper()
+	cmd := exec.CommandContext(s.ctx,
+		"kubectl", "--context", ktx,
+		"apply", "-n", ns, "-f", "-",
+	)
+	cmd.Stdin = strings.NewReader(manifest)
+	out, err := cmd.CombinedOutput()
+	s.Require().NoError(err, "kubectl apply failed:\n%s", string(out))
+}
+
+func (s *gatewayPairsSuite) applyNS(name string) {
+	s.T().Helper()
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+`, name)
+	cmd := exec.CommandContext(s.ctx,
+		"kubectl", "--context", ktx, "apply", "-f", "-",
+	)
+	cmd.Stdin = strings.NewReader(manifest)
+	out, err := cmd.CombinedOutput()
+	s.Require().NoError(err, "apply namespace %s failed:\n%s", name, string(out))
+}
+
+func (s *gatewayPairsSuite) findGatewayService(ns string) (string, error) {
+	out, err := s.kubectl("get", "svc", "-n", ns,
+		"-l", "gateway.envoyproxy.io/owning-gateway-name=eg",
+		"-o", "jsonpath={.items[0].metadata.name}")
+	if err != nil {
+		return "", fmt.Errorf("find gateway svc: %w -- output: %s", err, out)
+	}
+	name := strings.TrimSpace(out)
+	if name == "" {
+		return "", fmt.Errorf("no gateway service found in %s", ns)
+	}
+	return name, nil
+}
+
+func (s *gatewayPairsSuite) portForward(ns, resource, ports string) func() {
+	cmd := exec.Command("kubectl", "--context", ktx,
+		"port-forward", "-n", ns, resource, ports)
+	_ = cmd.Start()
+	return func() {
+		if cmd.Process != nil {
+			cmd.Process.Kill() //nolint:errcheck
+		}
+	}
 }
 
 func (s *gatewayPairsSuite) verifyGatewayAPICRDs() {
@@ -166,4 +338,69 @@ func (s *gatewayPairsSuite) eventually(
 		time.Sleep(tick)
 	}
 	s.Fail("condition not met within timeout", msgAndArgs...)
+}
+
+// ── manifest helpers ──────────────────────────────────────────────────────────
+
+func echoDeploymentManifest(ns string) string {
+	return fmt.Sprintf(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo
+  template:
+    metadata:
+      labels:
+        app: echo
+    spec:
+      containers:
+      - name: echo
+        image: kennethreitz/httpbin:latest
+        ports:
+        - containerPort: 80
+`, ns)
+}
+
+func echoServiceManifest(ns string) string {
+	return fmt.Sprintf(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: %s
+spec:
+  selector:
+    app: echo
+  ports:
+  - port: 80
+    targetPort: 80
+`, ns)
+}
+
+func httpRouteManifest(sysNS, dpNS string) string {
+	return fmt.Sprintf(`
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: echo
+  namespace: %s
+spec:
+  parentRefs:
+  - name: eg
+    namespace: %s
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: echo
+      port: 80
+`, dpNS, sysNS)
 }

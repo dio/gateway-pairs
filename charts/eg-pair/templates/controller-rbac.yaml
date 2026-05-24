@@ -1,5 +1,4 @@
 {{- $sysNS := include "eg-pair.systemNamespace" . }}
-{{- $dpNS  := include "eg-pair.dataplaneNamespace" . }}
 {{- $prefix := include "eg-pair.prefix" . }}
 
 # Leader election lease in system namespace
@@ -33,8 +32,8 @@ subjects:
   name: envoy-gateway
   namespace: {{ $sysNS }}
 ---
-# Cluster-scoped: EG needs to watch Gateway API resources across all namespaces
-# and manage GatewayClass status.
+# Cluster-scoped: mirrors the upstream gateway-helm ClusterRole exactly.
+# EG needs to watch Gateway API resources and manage GatewayClass status.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -43,43 +42,75 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     eg-pair: {{ .Values.pair.index | quote }}
 rules:
-- apiGroups: ["gateway.networking.k8s.io"]
-  resources:
-    - gatewayclasses
-    - gateways
-    - httproutes
-    - grpcroutes
-    - tcproutes
-    - tlsroutes
-    - udproutes
-    - referencegrants
-    - backendtlspolicies
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["gateway.networking.k8s.io"]
-  resources:
-    - gatewayclasses/status
-    - gateways/status
-    - httproutes/status
-    - grpcroutes/status
-  verbs: ["update", "patch"]
-- apiGroups: ["gateway.envoyproxy.io"]
-  resources: ["*"]
-  verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups: [""]
-  resources: ["secrets", "configmaps", "namespaces", "services", "serviceaccounts", "endpoints", "nodes"]
+  resources: ["nodes", "namespaces"]
   verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "services", "serviceaccounts"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods", "pods/binding"]
+  verbs: ["get", "list", "patch", "update", "watch"]
 - apiGroups: ["apps"]
   resources: ["deployments", "daemonsets"]
   verbs: ["get", "list", "watch"]
 - apiGroups: ["discovery.k8s.io"]
   resources: ["endpointslices"]
   verbs: ["get", "list", "watch"]
-- apiGroups: ["autoscaling"]
-  resources: ["horizontalpodautoscalers"]
+- apiGroups: ["multicluster.x-k8s.io"]
+  resources: ["serviceimports"]
   verbs: ["get", "list", "watch"]
-- apiGroups: ["policy"]
-  resources: ["poddisruptionbudgets"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+  - gatewayclasses
+  verbs: ["get", "list", "patch", "update", "watch"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+  - gatewayclasses/status
+  verbs: ["update"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+  - gateways
+  - listenersets
+  - grpcroutes
+  - httproutes
+  - referencegrants
+  - tcproutes
+  - tlsroutes
+  - udproutes
+  - backendtlspolicies
   verbs: ["get", "list", "watch"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+  - gateways/status
+  - listenersets/status
+  - grpcroutes/status
+  - httproutes/status
+  - tcproutes/status
+  - tlsroutes/status
+  - udproutes/status
+  - backendtlspolicies/status
+  verbs: ["update"]
+- apiGroups: ["gateway.envoyproxy.io"]
+  resources:
+  - envoyproxies
+  - envoypatchpolicies
+  - clienttrafficpolicies
+  - backendtrafficpolicies
+  - securitypolicies
+  - envoyextensionpolicies
+  - backends
+  - httproutefilters
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["gateway.envoyproxy.io"]
+  resources:
+  - envoypatchpolicies/status
+  - clienttrafficpolicies/status
+  - backendtrafficpolicies/status
+  - securitypolicies/status
+  - envoyextensionpolicies/status
+  - backends/status
+  verbs: ["update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

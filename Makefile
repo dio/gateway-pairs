@@ -4,61 +4,60 @@ CLUSTER    ?= gw-pairs-e2e
 KTX         = k3d-$(CLUSTER)
 PAIR       ?= 1
 
-BIN        = bin/gwp
+BIN = bin/gwp
 
-.PHONY: all build generate-assets generate-crds tidy tidy-check vet \
+.PHONY: all build generate-crds tidy tidy-check vet \
         helm-lint cluster cluster-delete crds-install pair-install pair-delete e2e clean
 
 all: build
 
-## build: build gwp binary (requires generate-assets first)
-build: generate-assets
+## build: build gwp binary (requires generate-crds first)
+build: generate-crds
 	go build \
-	  -ldflags="-s -w -X main.version=$(VERSION) -X main.egVersion=$(EG_VERSION) -X main.commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo none) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
+	  -ldflags="-s -w \
+	    -X main.version=$(VERSION) \
+	    -X main.egVersion=$(EG_VERSION) \
+	    -X main.commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo none) \
+	    -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 	  -o $(BIN) ./cmd/gwp
 
-## generate-assets: copy charts + pre-render CRDs into internal/assets/
-generate-assets: generate-crds
-	@mkdir -p internal/assets/charts
-	@cp -r charts/eg-crds internal/assets/charts/
-	@cp -r charts/eg-pair  internal/assets/charts/
-
-## generate-crds: pre-render CRD YAML from gateway-crds-helm (requires helm + OCI access)
+## generate-crds: pre-render CRD YAML from gateway-crds-helm into charts/crds/
 generate-crds:
-	@mkdir -p internal/assets/crds
+	@mkdir -p charts/crds
 	helm template gateway-api-crds oci://docker.io/envoyproxy/gateway-crds-helm \
 	  --version $(EG_VERSION) \
 	  --set crds.gatewayAPI.enabled=true \
 	  --set crds.gatewayAPI.channel=standard \
 	  --set crds.envoyGateway.enabled=false \
-	  > internal/assets/crds/gateway-api-standard.yaml
+	  > charts/crds/gateway-api-standard.yaml
 	helm template gateway-api-crds oci://docker.io/envoyproxy/gateway-crds-helm \
 	  --version $(EG_VERSION) \
 	  --set crds.gatewayAPI.enabled=true \
 	  --set crds.gatewayAPI.channel=experimental \
 	  --set crds.envoyGateway.enabled=false \
-	  > internal/assets/crds/gateway-api-experimental.yaml
+	  > charts/crds/gateway-api-experimental.yaml
 	helm template eg-crds oci://docker.io/envoyproxy/gateway-crds-helm \
 	  --version $(EG_VERSION) \
 	  --set crds.gatewayAPI.enabled=false \
 	  --set crds.envoyGateway.enabled=true \
-	  > internal/assets/crds/envoy-gateway.yaml
+	  > charts/crds/envoy-gateway.yaml
 	@echo "generated CRDs for EG $(EG_VERSION)"
 
-## tidy: run go mod tidy
+## tidy: go mod tidy across all modules
 tidy:
 	go mod tidy
 	cd e2e && go mod tidy
+	go work sync
 
-## tidy-check: verify go.mod and go.sum are tidy (CI)
+## tidy-check: verify modules are tidy (CI)
 tidy-check:
-	go mod tidy
-	git diff --exit-code go.mod go.sum
+	go mod tidy && git diff --exit-code go.mod go.sum
 	cd e2e && go mod tidy && git diff --exit-code go.mod go.sum
 
-## vet: go vet
+## vet: go vet all modules
 vet:
 	go vet ./...
+	cd e2e && go vet -tags=e2e ./...
 
 ## helm-lint: lint both charts
 helm-lint:
@@ -86,7 +85,7 @@ crds-install:
 ## pair-install: install one eg-pair release (PAIR=1 by default)
 pair-install:
 	helm --kube-context $(KTX) upgrade --install eg-pair-$(PAIR) ./charts/eg-pair \
-	  --namespace tr-system-$(PAIR) --create-namespace \
+	  --namespace tr-release-$(PAIR) --create-namespace \
 	  --set pair.index=$(PAIR) \
 	  --skip-crds \
 	  --wait --timeout 120s
@@ -95,12 +94,12 @@ pair-install:
 
 ## pair-delete: delete one eg-pair release (PAIR=1 by default)
 pair-delete:
-	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n tr-system-$(PAIR) || true
+	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n tr-release-$(PAIR) || true
 
 ## e2e: run full e2e suite
 e2e:
-	cd e2e && RUN_PAIRS_E2E=1 go test -v -count=1 -tags=e2e -run TestGatewayPairs ./...
+	cd e2e && RUN_PAIRS_E2E=1 go test -v -count=1 -tags=e2e -run TestGatewayPairs -timeout 15m ./...
 
-## clean: remove build artifacts
+## clean: remove build artifacts and generated CRDs
 clean:
-	rm -rf $(BIN) bin/ internal/assets/charts/ internal/assets/crds/*.yaml dist/
+	rm -rf $(BIN) bin/ dist/ charts/crds/*.yaml

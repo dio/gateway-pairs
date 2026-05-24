@@ -2,6 +2,20 @@
 # All namespace and resource names are derived from it unless overridden.
 pair:
   index: 1
+  # Prefix prepended to all namespace and GatewayClass names.
+  # A trailing hyphen is added automatically when the prefix is non-empty
+  # and does not already end with one.
+  #   "tr"   → "tr-"   (auto-hyphen)
+  #   "tars-" → "tars-" (already has hyphen)
+  #   ""      → ""      (no prefix, no hyphen)
+  namePrefix: tr
+  # Suffix appended after the role name. Caller controls any separator.
+  # When empty and index > 0, defaults to "-{index}".
+  # When empty and index == 0, no suffix (single/unnamed pair).
+  #   ""     + index=1  → "-1"   (default)
+  #   "-prod"            → "-prod"
+  #   "1"               → "1"    (no hyphen before suffix)
+  nameSuffix: ""
 
 # Derived names (override only if you need non-standard naming):
 #   systemNamespace:   tr-system-{{ pair.index }}
@@ -22,6 +36,12 @@ controller:
     limits:
       cpu: 500m
       memory: 256Mi
+  # topologyInjector enables the EG MutatingWebhookConfiguration that injects
+  # pod topology spread constraints onto Envoy proxy pods.
+  # Disabled by default in the multi-pair model: with N pairs each registering
+  # a cluster-scoped webhook, they would interfere with each other's proxies.
+  # Enable only if you have a single pair and need zone-aware proxy spreading.
+  topologyInjector: false
 
 # Watch mode for Gateway Namespace mode.
 # Namespaces: explicit list (narrower RBAC, good for static N).
