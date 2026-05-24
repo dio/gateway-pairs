@@ -18,8 +18,8 @@ SYSTEM_NS     = $(PAIR_PREFIX)$(_SEP)system-$(PAIR)
 BIN = bin/gwp
 
 .PHONY: all build generate-crds generate-assets dep-update tidy tidy-check vet test \
-        helm-lint cluster cluster-delete crds-install pair-install pair-delete e2e \
-        e2e-simple e2e-simple-gwp clean
+        helm-lint cluster cluster-delete crds-install pair-install pair-delete \
+        e2e e2e-all e2e-simple e2e-simple-gwp clean
 
 all: build
 
@@ -129,7 +129,11 @@ e2e:
 	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) PAIR_COUNT=$(PAIR_COUNT) RUN_E2E=1 \
 	  go test -v -count=1 -run TestGatewayPairs -timeout 30m ./multipairs/...
 
-## e2e-simple: run single-pair sanity check via raw Helm (~5 min)
+## e2e-all: run all e2e suites in parallel (requires --jobs/-j)
+e2e-all:
+	$(MAKE) -j3 e2e-simple e2e-simple-gwp e2e
+
+
 e2e-simple:
 	cd e2e && RUN_E2E=1 \
 	  go test -v -count=1 -run TestSimplePair -timeout 15m ./simple/...
