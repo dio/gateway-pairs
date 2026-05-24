@@ -8,7 +8,7 @@ CRDs are installed once via `eg-crds` + `hack/install-crds.sh`.
 
 Load these when working in this repo:
 
-- **eg-namespace-pairs** (`/.agents/skills/eg-namespace-pairs/SKILL.md`)
+- **envoy-gateway-namespace-pairs** (loaded from hermes agent skills)
   Comprehensive multi-pair architecture: naming model, RBAC shape, certgen,
   controllerName uniqueness, e2e harness, CRD conflict strategy, namespace
   hook leak problem, subchart migration plan, embedded assets, multi-tier proxies.
