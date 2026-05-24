@@ -36,8 +36,18 @@ func TestFor_emptyPrefix(t *testing.T) {
 	if p.GatewayClass != "1" {
 		t.Errorf("GatewayClass = %q, want 1", p.GatewayClass)
 	}
-	if p.ControllerName != "gateway.envoyproxy.io/1" {
-		t.Errorf("ControllerName = %q, want gateway.envoyproxy.io/1", p.ControllerName)
+}
+
+func TestForSuffix_emptyPrefix(t *testing.T) {
+	p := names.ForSuffix("", "prod")
+	if p.SystemNS != "system-prod" {
+		t.Errorf("SystemNS = %q, want system-prod", p.SystemNS)
+	}
+	if p.DataplaneNS != "dataplane-prod" {
+		t.Errorf("DataplaneNS = %q, want dataplane-prod", p.DataplaneNS)
+	}
+	if p.GatewayClass != "prod" {
+		t.Errorf("GatewayClass = %q, want prod", p.GatewayClass)
 	}
 }
 

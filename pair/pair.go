@@ -84,9 +84,6 @@ type InstallOptions struct {
 // with all required per-pair flags, then waits for the controller and GatewayClass
 // to be ready.
 func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, opts InstallOptions) error {
-	if opts.Prefix == "" {
-		opts.Prefix = "tr"
-	}
 	if opts.HelmTimeout == 0 {
 		opts.HelmTimeout = 5 * time.Minute
 	}
@@ -178,9 +175,6 @@ func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index i
 // Envoy admin API (127.0.0.1:19000) via kubectl port-forward before deleting
 // the Gateway -- see e2e/testutil.Harness.QuitProxyPods for the implementation.
 func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix, suffix string, out io.Writer) error {
-	if prefix == "" {
-		prefix = "tr"
-	}
 	if out == nil {
 		out = os.Stdout
 	}
@@ -238,9 +232,6 @@ func Delete(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index in
 
 // Get returns the status of a single installed pair.
 func Get(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, prefix, suffix string) (*Status, error) {
-	if prefix == "" {
-		prefix = "tr"
-	}
 	var n names.Pair
 	if suffix != "" {
 		n = names.ForSuffix(prefix, suffix)
@@ -303,9 +294,6 @@ func Get(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index int, 
 
 // List returns the status of all installed pairs, discovered via helm list.
 func List(ctx context.Context, helmClient Helmer, kubeClient Kubectl, prefix string) ([]*Status, error) {
-	if prefix == "" {
-		prefix = "tr"
-	}
 	releases, err := helmClient.List(ctx, `^eg-pair-\d+$`)
 	if err != nil {
 		return nil, fmt.Errorf("helm list: %w", err)
@@ -331,9 +319,6 @@ func List(ctx context.Context, helmClient Helmer, kubeClient Kubectl, prefix str
 func Info(prefix, suffix string, index int) names.Pair {
 	if suffix != "" {
 		return names.ForSuffix(prefix, suffix)
-	}
-	if prefix == "" {
-		prefix = "tr"
 	}
 	return names.For(prefix, index)
 }
