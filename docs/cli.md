@@ -3,7 +3,7 @@
 A single binary, `gwp`, that wraps the operational surface of gateway-pairs:
 CRD lifecycle management, pair install/status/teardown, and post-install
 verification. It is a tool for operators and CI pipelines, not a replacement
-for Helm -- Helm is still the install mechanism for the `eg-pair` chart.
+for Helm. Helm is still the install mechanism for the `eg-pair` chart.
 `gwp` handles what Helm cannot: per-pair value derivation, provider-managed
 CRD detection, and readable cluster state.
 
@@ -47,10 +47,10 @@ The CRD YAML files under `internal/assets/crds/` are **generated at build
 time**, not committed to the repo. They are produced by running
 `helm template gateway-crds-helm` during the release build and embedded
 via `//go:embed`. At runtime, `gwp crds install` pipes them straight to
-`kubectl apply --server-side` -- no OCI registry access, no Helm required
+`kubectl apply --server-side`: no OCI registry access, no Helm required
 for CRDs.
 
-The charts under `internal/assets/charts/` ARE committed -- they are the
+The charts under `internal/assets/charts/` ARE committed: they are the
 same files in `charts/`. A symlink or a `go generate` copy step keeps them
 in sync; see the build section below.
 
@@ -85,7 +85,7 @@ generate-assets: generate-crds
 ```
 
 The copy is cheap. The alternative (symlinks through `//go:embed`) does not
-work -- `go:embed` does not follow symlinks.
+work. `go:embed` does not follow symlinks.
 
 ### CRD generation (not committed, generated at build/release time)
 
@@ -266,7 +266,7 @@ func applyServerSide(ctx context.Context, kubectlContext string, r io.Reader) er
 }
 ```
 
-No `io.Pipe` needed -- the embedded bytes are already in memory. The
+No `io.Pipe` needed; the embedded bytes are already in memory. The
 `helm template | kubectl` pipe (documented in the previous section) is
 only needed for the PoC phase before `generate-crds` is wired up.
 
@@ -368,7 +368,7 @@ gwp pair install 2
 gwp pair status
 ```
 
-`gwp pair install` is idempotent -- it runs `helm upgrade --install`, which
+`gwp pair install` is idempotent: it runs `helm upgrade --install`, which
 upgrades an existing release if one exists.
 
 The operator does not need to know which chart version changed, which CRD
@@ -396,9 +396,9 @@ gwp pair install 1 --set controller.image.repository=registry.internal/envoyprox
 
 1. Bump `EG_VERSION` in Makefile if upgrading EG.
 2. Run `make generate-crds` locally and inspect the diff of the generated YAML.
-3. Run `make build` -- binary embeds fresh CRDs and charts.
-4. Run `make e2e` -- installs from embedded assets, not from OCI.
-5. Tag and push -- CI builds the release binary with the same `EG_VERSION`.
+3. Run `make build` (binary embeds fresh CRDs and charts).
+4. Run `make e2e` (installs from embedded assets, not from OCI).
+5. Tag and push; CI builds the release binary with the same `EG_VERSION`.
 6. `gwp version` on the release binary should show the correct bundled versions.
 
 
@@ -522,14 +522,14 @@ Checks for `gateways.gateway.networking.k8s.io`. Reads the
 `managedFields[*].manager` for provider fingerprints.
 
 **Critical: `bundle-version` alone is not a provider-managed signal.**
-That annotation is written by ANY install path -- `kubectl apply`, `helm
+That annotation is written by ANY install path: `kubectl apply`, `helm
 template`, GKE, AKS, everyone. Non-empty means "installed", nothing more.
 The real signal is the field manager name in `managedFields`.
 
 Known provider managers (checked by `gwp`):
-- `gke-networking-controller`, `gke-gateway-api` -- GKE Standard
-- `aks-gateway-api-controller` -- AKS
-- `addon-manager` -- GKE autopilot / addon-manager pattern
+- `gke-networking-controller`, `gke-gateway-api`: GKE Standard
+- `aks-gateway-api-controller`: AKS
+- `addon-manager`: GKE autopilot / addon-manager pattern
 
 Four outcomes:
 
@@ -1068,7 +1068,7 @@ If anything is orphaned:
 ## `gwp pair list`
 
 Discovers all pairs in the cluster by listing Namespaces with the
-`eg-role=system` label. Does not require Helm to be configured -- works
+`eg-role=system` label. Does not require Helm to be configured; works
 read-only against the cluster.
 
 ```
@@ -1224,7 +1224,7 @@ The migration: every env var the script accepts maps to a CLI flag.
 ### Helm invocation
 
 `exec.Command("helm", ...)` with `--kube-context` injected. Do not use the
-Helm Go SDK -- it pulls in 50+ dependencies and has breaking API changes
+Helm Go SDK (it pulls in 50+ dependencies and has breaking API changes
 between minor versions. The exec model is simpler and matches the Makefile.
 
 For `gwp pair install`, the flow is:
@@ -1235,7 +1235,7 @@ For `gwp pair install`, the flow is:
 4. poll for GatewayClass Accepted (exec kubectl jsonpath)
 
 Polling uses exec kubectl with jsonpath, not client-go or the dynamic client.
-This keeps the dependency surface minimal -- no `k8s.io/*` imports in the
+This keeps the dependency surface minimal: no `k8s.io/*` imports in the
 `pair` package.
 
 ### CRD detection: Go implementation

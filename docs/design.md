@@ -377,7 +377,7 @@ Gateways reference the same EG version and run in the same cluster.
 
 > `gateway.create` and `envoyProxy.create` are both `false` by default.
 > The chart is a pure infrastructure scaffold. Use `gwp pair install` or
-> `make pair-install` -- both inject the required `controllerName` and
+> `make pair-install` both inject the required `controllerName` and
 > `watch.namespaces` flags automatically.
 
 ---

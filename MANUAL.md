@@ -2,9 +2,9 @@
 
 Two installation paths:
 
-- **CLI path** (`gwp`) -- the primary path. Single binary, embeds the chart and
+- **CLI path** (`gwp`): the primary path. Single binary, embeds the chart and
   pre-rendered CRD YAML. No OCI access or chart downloads at install time.
-- **Helm path** -- direct Helm + `hack/install-crds.sh`. Useful for CI pipelines
+- **Helm path**: direct Helm + `hack/install-crds.sh`. Useful for CI pipelines
   that already manage Helm directly, or for inspecting/customising chart templates.
 
 ---
@@ -20,16 +20,16 @@ Two installation paths:
 
 `tr-system-{i}` is the Helm release namespace. `tr-dataplane-{i}` is a
 chart-declared resource. In GatewayNamespace mode EG places proxy Deployments in
-the Gateway's namespace -- since Gateways live in `tr-dataplane-{i}`, proxies
+the Gateway's namespace. Since Gateways live in `tr-dataplane-{i}`, proxies
 land there too.
 
 ### Layer model
 
 | Layer | Installed by | Resources |
 |---|---|---|
-| 1 -- cluster | `gwp crds install` | Gateway API CRDs, EG CRDs |
-| 2 -- per pair | `gwp pair install` | GatewayClass, controller, RBAC, namespaces |
-| 3 -- per tenant | operator (`kubectl apply`) | EnvoyProxies, Gateways, HTTPRoutes |
+| 1: cluster | `gwp crds install` | Gateway API CRDs, EG CRDs |
+| 2: per pair | `gwp pair install` | GatewayClass, controller, RBAC, namespaces |
+| 3: per tenant | operator (`kubectl apply`) | EnvoyProxies, Gateways, HTTPRoutes |
 
 The only coupling from Layer 3 to Layer 2 is `gatewayClassName: tr-{i}` in each
 Gateway manifest. Everything else in `tr-dataplane-{i}` is operator-owned.
@@ -100,9 +100,9 @@ gwp pair install 1 --set "gateway-helm.config.envoyGateway.extensionApis.enableE
 ```
 
 `gwp pair install` automatically injects the three required per-pair flags:
-- `controllerName` -- unique per pair, prevents controllers fighting over each
+- `controllerName`: unique per pair, prevents controllers fighting over each
   other's GatewayClasses
-- `watch.type` and `watch.namespaces` -- scopes the controller to its own two
+- `watch.type` and `watch.namespaces`: scopes the controller to its own two
   namespaces only
 
 ### 4. Get the coupling fields for Layer 3 manifests
@@ -176,12 +176,12 @@ gwp pair delete 1
 1. Deletes all Gateways in `tr-dataplane-{i}` with `--wait` so EG deprovisions
    the proxy Deployment before the controller exits.
 2. Waits until EG-managed Deployments and Services are gone.
-3. `helm uninstall` -- removes the controller, ClusterRoles, both namespaces.
+3. `helm uninstall` (removes the controller, ClusterRoles, both namespaces).
 4. Deletes both namespaces explicitly.
 
 **Why the sequence matters:**
 
-Proxy pods have no Kubernetes finalizers -- they use ownerReferences. But
+Proxy pods have no Kubernetes finalizers; they use ownerReferences. But
 `terminationGracePeriodSeconds` defaults to 360s (EG formula: `drainTimeout + 300s`).
 Deleting the controller before the pod exits leaves the pod Terminating with nothing
 to cancel its grace period. The namespace then blocks for up to 6 minutes.
@@ -192,7 +192,7 @@ Deployment is gone, any remaining pod is just waiting out its grace period.
 **For fast teardown (no live connections):**
 
 POST `/quitquitquit` to the Envoy admin API before calling `gwp pair delete`.
-This triggers an immediate graceful shutdown -- the pod exits as soon as the
+This triggers an immediate graceful shutdown: the pod exits as soon as the
 connection drain completes, which is instant with no live traffic.
 
 The admin API listens on `127.0.0.1:19000` (localhost-only). EG uses distroless
@@ -219,7 +219,7 @@ kubectl wait pod/$PROXY_POD -n tr-dataplane-1 --for=delete --timeout=30s
 gwp pair delete 1
 ```
 
-Must be called **before** `gwp pair delete` / Gateway deletion -- port-forward to
+Must be called **before** `gwp pair delete` / Gateway deletion; port-forward to
 a Terminating pod is unreliable once SIGTERM is delivered.
 
 **Alternative: reduce drainTimeout in EnvoyProxy:**
@@ -319,7 +319,7 @@ kubectl delete namespace tr-system-1 tr-dataplane-1 --ignore-not-found --wait=fa
 ```
 
 For fast teardown with no live connections, send `/quitquitquit` to each proxy pod
-before step 1 -- see [CLI path section 8](#8-uninstall-a-pair) for the script.
+before step 1 (see [CLI path section 8](#8-uninstall-a-pair) for the script).
 
 ---
 
@@ -340,7 +340,7 @@ kubectl get configmap envoy-gateway-config -n tr-system-1 \
 
 ### Namespace stuck `Terminating` after uninstall
 
-Proxy pod finalizer was never cleared -- the controller was removed before the
+Proxy pod finalizer was never cleared: the controller was removed before the
 Gateway was deleted.
 
 ```bash
@@ -358,7 +358,7 @@ EG-managed Deployments still exist.
 
 ### Proxy not ready: `tokenreviews.authentication.k8s.io is forbidden`
 
-The `tokenreviews` ClusterRole is missing. Reinstall the pair -- the chart owns
+The `tokenreviews` ClusterRole is missing. Reinstall the pair; the chart owns
 this ClusterRole and binding.
 
 ### Controller logs `unknown namespace for the cache`
@@ -377,7 +377,7 @@ derives unique names automatically.
 
 ### Gateway `Programmed=False` with `AddressNotAssigned`
 
-Expected for ClusterIP gateways -- no external IP, so the top-level
+Expected for ClusterIP gateways (no external IP), so the top-level
 `Gateway.status.conditions[Programmed]` stays False. Check listener-level
 conditions instead:
 
@@ -391,6 +391,6 @@ kubectl get gateway eg-test -n tr-dataplane-1 \
 
 ## Reference
 
-- [docs/design.md](docs/design.md) -- architecture, RBAC shape, watch list wiring, uninstall sequence
-- [docs/api.md](docs/api.md) -- Go embedding API (`gwpapi` package)
-- [e2e/README.md](e2e/README.md) -- e2e test suite, environment variables, test sequence
+- [docs/design.md](docs/design.md): architecture, RBAC shape, watch list wiring, uninstall sequence
+- [docs/api.md](docs/api.md): Go embedding API (`gwpapi` package)
+- [e2e/README.md](e2e/README.md): e2e test suite, environment variables, test sequence

@@ -10,7 +10,7 @@ GatewayClass tr-{i}   cluster-scoped, unique per pair
 ```
 
 CRDs are installed once cluster-wide. Each pair's controller watches only its own
-two namespaces and manages only its own GatewayClass -- complete isolation.
+two namespaces and manages only its own GatewayClass, giving complete isolation.
 
 ## Install
 
@@ -78,9 +78,9 @@ and troubleshooting.
 
 | Layer | Installed by | Resources |
 |---|---|---|
-| 1 -- cluster | `gwp crds install` | Gateway API CRDs, EG CRDs |
-| 2 -- per pair | `gwp pair install` | GatewayClass, controller, RBAC, namespaces |
-| 3 -- per tenant | operator (`kubectl apply`) | EnvoyProxies, Gateways, HTTPRoutes |
+| 1: cluster | `gwp crds install` | Gateway API CRDs, EG CRDs |
+| 2: per pair | `gwp pair install` | GatewayClass, controller, RBAC, namespaces |
+| 3: per tenant | operator (`kubectl apply`) | EnvoyProxies, Gateways, HTTPRoutes |
 
 The only coupling from Layer 3 to Layer 2 is `gatewayClassName: tr-{i}` in each
 Gateway manifest. Use `gwp pair info <i>` for the exact values.
