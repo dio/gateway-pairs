@@ -1,10 +1,12 @@
-# gwp CLI reference
+# gwp CLI
 
-`gwp` is a single binary that manages Envoy Gateway controller+dataplane pairs.
-It wraps Helm for chart installs and kubectl for cluster queries. Helm is still
-the install mechanism for the `eg-pair` chart; the CLI handles the per-pair
-flag injection that raw `helm install` requires and that the chart cannot
-self-derive (see [design.md](design.md) for why).
+`gwp` manages Envoy Gateway controller+dataplane pairs. It wraps Helm for chart
+installs and kubectl for cluster queries. The binary embeds the `eg-pair` chart
+and pre-rendered CRD YAML so no OCI registry access is needed at install time.
+
+> **Generated flag reference:** `make docs` writes one `.md` per command into
+> `docs/commands/`. The flag tables below are copied from those files and reflect
+> the current binary exactly. Run `make docs` after changing flag definitions.
 
 ---
 
@@ -26,23 +28,29 @@ gwp
 
 ---
 
-## Global flags
+## gwp
 
-All flags below apply to every subcommand.
+Manage Envoy Gateway controller+dataplane pairs
 
-| Flag | Default | Description |
-|---|---|---|
-| `--context` | current-context | kubeconfig context name |
-| `--kubeconfig` | `~/.kube/config` | path to kubeconfig |
-| `--prefix` | `tr` | name prefix for all derived resource names |
-| `--no-prefix` | false | use no prefix (produces `system-1`, `dataplane-1`) |
-| `--suffix` | `` | string suffix override (e.g. `prod` → `tr-system-prod`) |
-| `--no-suffix` | false | use no suffix (produces `tr-system`, `tr-dataplane`) |
-| `-o, --output` | `text` | output format: `text` or `json` |
+### Options
+
+```
+      --context string      kubeconfig context (default: current-context)
+  -h, --help                help for gwp
+      --kubeconfig string   path to kubeconfig file (default: ~/.kube/config)
+      --no-prefix           use no prefix: produces system-1, dataplane-1 instead of tr-system-1, tr-dataplane-1
+      --no-suffix           use no suffix: produces tr-system, tr-dataplane instead of tr-system-1, tr-dataplane-1. Useful for single-pair deployments where numbering is unnecessary.
+  -o, --output string       output format: text or json (default "text")
+      --prefix string       name prefix for all derived resource names (e.g. "tr" → tr-system-1, tr-1) (default "tr")
+      --suffix string       string suffix override (e.g. "prod" → tr-system-prod, GatewayClass tr-prod). When set, replaces the numeric index in all names; use --suffix instead of an index.
+```
+
+All flags above are global: they apply to every subcommand.
 
 ### Naming matrix
 
-The prefix and suffix flags combine as follows (index=1):
+The prefix/suffix flags combine to produce all derived resource names. With
+index=1:
 
 | flags | system NS | dataplane NS | GatewayClass |
 |---|---|---|---|
@@ -54,38 +62,41 @@ The prefix and suffix flags combine as follows (index=1):
 | `--no-prefix --suffix prod` | `system-prod` | `dataplane-prod` | `prod` |
 | `--no-prefix --no-suffix` | `system` | `dataplane` | *(empty)* |
 
-Use `--no-prefix` / `--no-suffix` rather than `--prefix ""` / `--suffix ""`
-to avoid shell quoting issues in Makefiles and CI.
+Use `--no-prefix` / `--no-suffix` instead of `--prefix ""` / `--suffix ""`
+to avoid shell quoting issues in Makefiles and CI scripts.
+
+`--no-suffix` is useful for single-pair deployments where numbering is
+unnecessary. `--no-prefix --no-suffix` gives bare `system` / `dataplane`
+namespaces with no decoration.
+
+### Output format
+
+All commands support `-o json`. JSON is suitable for CI scripting:
+
+```bash
+gwp pair status 1 -o json | jq '.controller.available'
+gwp pair list -o json | jq '.[] | select(.versionDrift) | .names.systemNamespace'
+gwp pair info 1 -o json | jq -r '.gatewayClass'
+gwp crds detect -o json | jq '.gatewayAPI.state'
+```
 
 ---
 
-## Embedded assets
+## gwp version
 
-The binary carries two asset groups via `//go:embed`:
-
-```
-charts/
-  eg-pair/                    Helm chart (full tree, including subchart tarball)
-  crds/
-    gateway-api-standard.yaml   pre-rendered Gateway API standard channel CRDs
-    gateway-api-experimental.yaml
-    envoy-gateway.yaml          pre-rendered EG CRDs
-```
-
-The `crds/` YAML files are generated at build time (`make generate-crds`) and
-are gitignored. CI and goreleaser run `make generate-assets` before building the
-binary. The `eg-pair/` chart directory is committed and embedded via `all:eg-pair`
-(the `all:` prefix includes gitignored files such as the subchart `.tgz`).
-
----
-
-## `gwp version`
+Print gwp version and bundled component versions.
 
 ```
-gwp version [-o json]
+gwp version [flags]
 ```
 
-Prints the binary version and bundled component versions.
+### Options
+
+```
+  -h, --help   help for version
+```
+
+### Example output
 
 ```
 gwp v0.1.0
@@ -94,64 +105,48 @@ gwp v0.1.0
   built:      2026-05-24T10:00:00Z
 ```
 
-JSON:
-
-```json
-{"version":"v0.1.0","egVersion":"v1.8.0","commit":"abc1234","date":"2026-05-24T10:00:00Z"}
-```
+JSON: `{"version":"v0.1.0","egVersion":"v1.8.0","commit":"abc1234","date":"..."}`
 
 ---
 
-## `gwp crds detect`
+## gwp crds detect
+
+Show what CRDs are installed and who manages them.
 
 ```
-gwp crds detect [-o json]
+gwp crds detect [flags]
 ```
 
-Inspects the cluster and reports the installation state of:
-- Gateway API CRDs (standard or experimental channel)
-- Envoy Gateway CRDs
+### Options
 
-Reports who manages the CRDs when they are provider-managed (GKE, AKS, etc.)
-so you know whether to skip or force installation.
+```
+  -h, --help   help for detect
+```
 
-**States:**
+Inspects the cluster for Gateway API and Envoy Gateway CRDs. Reports the
+installation state and, for provider-managed clusters (GKE, AKS, etc.), which
+controller owns the CRDs so you know whether to skip or force installation.
+
+### States
 
 | State | Meaning |
 |---|---|
-| `not-installed` | CRD not found on the cluster |
-| `installed` | CRD present, managed by gwp / helm / kubectl |
-| `provider-managed` | CRD present, managed by a cloud provider controller |
+| `not-installed` | CRD not found |
+| `installed` | Present, self-managed |
+| `provider-managed` | Present, owned by a cloud controller |
 
-**Text output:**
+### Example output (text)
 
 ```
 Gateway API CRDs:
   state:   not-installed
   channel: standard
-  version: (none)
 
 Envoy Gateway CRDs:
   state:   not-installed
 ```
 
-**JSON output:**
-
-```json
-{
-  "gatewayAPI": {
-    "state": "not-installed",
-    "bundleVersion": "",
-    "channel": "standard",
-    "providerManager": ""
-  },
-  "envoyGateway": {
-    "state": "not-installed"
-  }
-}
-```
-
-**Provider-managed example (GKE Standard):**
+Provider-managed example:
 
 ```
 Gateway API CRDs:
@@ -163,116 +158,140 @@ Gateway API CRDs:
 
 ---
 
-## `gwp crds install`
+## gwp crds install
+
+Install Gateway API and Envoy Gateway CRDs.
 
 ```
 gwp crds install [flags]
 ```
 
-Installs Gateway API and Envoy Gateway CRDs from the embedded pre-rendered YAML
-using `kubectl apply --server-side`. No OCI registry access required.
+### Options
 
-**Flags:**
+```
+      --channel string           Gateway API channel: standard or experimental (default "standard")
+      --force-gateway-api-crds   install Gateway API CRDs even when already present
+  -h, --help                     help for install
+      --skip-gateway-api-crds    skip Gateway API CRDs (use for provider-managed clusters)
+```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--channel` | `standard` | Gateway API channel: `standard` or `experimental` |
-| `--skip-gateway-api-crds` | false | skip Gateway API CRDs (provider-managed clusters) |
-| `--force-gateway-api-crds` | false | install Gateway API CRDs even when already present |
+Installs from embedded pre-rendered YAML using `kubectl apply --server-side`.
+No OCI registry access required. Safe to re-run: server-side apply is
+idempotent.
 
 **Behaviour:**
 
-- If Gateway API CRDs are already present and not `--force`, skips them.
-- If provider-managed, skips unless `--force-gateway-api-crds` is set (rare).
-- EG CRDs are always installed / upgraded via server-side apply (idempotent).
+- Gateway API CRDs already present: skipped unless `--force-gateway-api-crds`.
+- Provider-managed Gateway API CRDs: skipped unless `--force-gateway-api-crds`
+  (rare; only needed when downgrading, which risks removing CRD versions).
+- EG CRDs: always applied (idempotent upgrade).
 
-**Safe to re-run.** Server-side apply is idempotent; re-running upgrades CRDs
-in place without affecting existing CR objects.
+**Upgrade:** When bumping EG version, install the new `gwp` binary and run
+`gwp crds install --force-gateway-api-crds` before `gwp pair install`.
 
 ---
 
-## `gwp pair install <index>`
+## gwp pair install
+
+Install or upgrade a pair.
 
 ```
 gwp pair install <index> [flags]
 ```
 
-Installs or upgrades an `eg-pair` Helm release. Uses `helm upgrade --install`,
-so re-running on an existing pair upgrades it in place. Does not error on
-"already exists".
+### Options
 
-**What it computes and injects automatically:**
+```
+      --helm-timeout duration   timeout for helm upgrade --install (default 5m0s)
+  -h, --help                    help for install
+      --set stringArray         additional --set flags passed to helm (repeatable)
+      --wait-timeout duration   timeout for post-install readiness polling (default 3m0s)
+```
 
-| Helm `--set` | Value | Why |
+Uses `helm upgrade --install`. Re-running on an existing pair upgrades it in
+place without error.
+
+**What the CLI injects automatically:**
+
+| `--set` key | Value | Why |
 |---|---|---|
 | `pair.namePrefix` | `--prefix` value | chart derives NS names from this |
-| `pair.nameSuffix` | `--suffix` value | string suffix override (when `--suffix` or `--no-suffix`) |
-| `pair.index` | `<index>` (0 when suffix active) | chart derives numeric suffix from this |
-| `gateway-helm.config.envoyGateway.gateway.controllerName` | `gateway.envoyproxy.io/<gwclass>` | unique per pair; prevents controllers colliding |
-| `gateway-helm.config.envoyGateway.provider.kubernetes.watch.type` | `Namespaces` | scope controller to its two namespaces |
-| `gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces` | `{system-NS, dataplane-NS}` | the two namespaces for this pair |
+| `pair.nameSuffix` | `--suffix` value | string suffix when `--suffix`/`--no-suffix` active |
+| `pair.index` | `<index>` (0 when suffix active) | chart derives numeric suffix |
+| `gateway-helm.config...controllerName` | `gateway.envoyproxy.io/<gwclass>` | unique per pair; prevents controller collisions |
+| `gateway-helm.config...watch.type` | `Namespaces` | scopes controller to its two namespaces |
+| `gateway-helm.config...watch.namespaces` | `{system-NS,dataplane-NS}` | the two namespaces for this pair |
 
-These three `gateway-helm.*` flags cannot be derived by the chart itself (Helm
-resolves subchart values before templates run). The CLI computes them from
-`--prefix` / `--suffix` / `--no-*` and injects them.
+The three `gateway-helm.*` flags cannot be derived by the chart itself (Helm
+resolves subchart values before templates run).
 
-**Flags:**
+**Post-install waits for:**
 
-| Flag | Default | Description |
-|---|---|---|
-| `--set` | (none) | additional `--set` flags passed to helm (repeatable) |
-| `--helm-timeout` | `5m` | timeout for `helm upgrade --install` |
-| `--wait-timeout` | `3m` | timeout for post-install readiness polling |
+1. Controller Deployment `envoy-gateway` in SystemNS: Available.
+2. GatewayClass `Accepted=True`.
 
-**What it waits for after install:**
-
-1. Controller Deployment `envoy-gateway` in SystemNS becomes Available.
-2. GatewayClass accepted by the controller (`Accepted=True` condition).
-
-**Example:**
+**Examples:**
 
 ```bash
 gwp pair install 1
 gwp --prefix myapp pair install 2
 gwp --suffix prod pair install 1
-gwp --no-prefix --no-suffix pair install 1   # system/dataplane namespaces
+gwp --no-prefix --no-suffix pair install 1
 gwp pair install 1 --set "gateway-helm.config.envoyGateway.extensionApis.enableEnvoyPatchPolicy=true"
 ```
 
 ---
 
-## `gwp pair delete <index>`
+## gwp pair delete
+
+Uninstall a pair.
 
 ```
-gwp pair delete <index>
+gwp pair delete <index> [flags]
 ```
 
-Uninstalls an `eg-pair` Helm release using the correct teardown sequence:
+### Options
+
+```
+  -h, --help   help for delete
+```
+
+Runs the correct teardown sequence:
 
 1. Delete all Gateways in the dataplane NS with `--wait` so EG deprovisions
    the proxy Deployment before the controller exits.
 2. Delete all EnvoyProxy CRs in the dataplane NS.
 3. Wait until EG-managed Deployments and Services are gone.
-4. `helm uninstall` the release.
+4. `helm uninstall`.
 5. Delete both namespaces explicitly.
 
-Skipping step 1 and removing the controller first leaves proxy pods stuck in
-`Terminating` for up to 360s (EG default `terminationGracePeriodSeconds`).
+Skipping step 1 leaves proxy pods stuck in Terminating for up to 360s (EG
+default `terminationGracePeriodSeconds = drainTimeout + 300s`).
 
 For fast teardown with no live connections, POST `/quitquitquit` to the proxy
-admin API before deleting. See MANUAL.md section 8 for the script.
+Envoy admin API (`127.0.0.1:19000`) via `kubectl port-forward` before calling
+`gwp pair delete`. See MANUAL.md section 8 for the script.
 
 ---
 
-## `gwp pair status [index]`
+## gwp pair status
+
+Show health of one pair or all pairs.
 
 ```
-gwp pair status [index] [-o json]
+gwp pair status [index] [flags]
 ```
 
-Shows the health of one pair (when `index` is given) or all pairs.
+### Options
 
-**Single pair text output:**
+```
+  -h, --help   help for status
+```
+
+Without `[index]`, shows all installed pairs (same as `gwp pair list` with
+detailed output).
+
+**Text output (single pair):**
 
 ```
 Pair 1 (tr-1):
@@ -287,23 +306,34 @@ Layer 3 (in tr-dataplane-1):
   eg-test  Programmed=True  proxy 1/1
 ```
 
-The `[DRIFT]` marker appears when the installed EG version differs from the
-version bundled in the current `gwp` binary. Run `gwp crds install --force`
-then `gwp pair install <index>` to upgrade.
+The `[DRIFT]` tag appears when the installed EG version (from the Helm release
+`appVersion`) differs from the version bundled in the current `gwp` binary.
+Run `gwp crds install --force-gateway-api-crds` then `gwp pair install <index>`
+to upgrade.
 
-**JSON output includes:** `index`, `names`, `helmStatus`, `installedEgVersion`,
+**JSON fields:** `index`, `names`, `helmStatus`, `installedEgVersion`,
 `bundledEgVersion`, `versionDrift`, `controller`, `gatewayClass`, `l3Gateways`.
 
 ---
 
-## `gwp pair info <index>`
+## gwp pair info
+
+Print coupling fields for writing Layer 3 manifests.
 
 ```
-gwp pair info <index> [-o json]
+gwp pair info <index> [flags]
 ```
 
-Prints the coupling fields an operator needs when writing Layer 3 manifests
-(EnvoyProxy, Gateway, HTTPRoute). No cluster access required.
+### Options
+
+```
+  -h, --help   help for info
+```
+
+No cluster access required. Derives all names from `--prefix`, `--suffix`,
+`--no-*`, and `<index>`.
+
+**Example output:**
 
 ```
 Pair 1:
@@ -320,26 +350,28 @@ Use in your Gateway manifests:
         group: gateway.envoyproxy.io
         kind: EnvoyProxy
         name: <your-tier-name>  # must exist in tr-dataplane-1
-
-  listeners:
-  - allowedRoutes:
-      namespaces:
-        from: Selector
-        selector:
-          matchLabels:
-            tr/gateway-routes: "true"
 ```
 
 ---
 
-## `gwp pair list`
+## gwp pair list
+
+List all installed pairs.
 
 ```
-gwp pair list [-o json]
+gwp pair list [flags]
 ```
 
-Lists all installed `eg-pair` releases discovered via `helm list`. Calls
+### Options
+
+```
+  -h, --help   help for list
+```
+
+Discovers pairs via `helm list` filtered to `eg-pair-*` releases, then calls
 `gwp pair status` for each.
+
+**Text output:**
 
 ```
 PAIR   SYSTEM-NS     GW-CLASS   STATUS
@@ -349,76 +381,58 @@ PAIR   SYSTEM-NS     GW-CLASS   STATUS
 
 ---
 
-## Output format
+## Embedded assets
 
-All commands support `-o json`. The JSON schema mirrors the text output
-fields. Useful for CI and scripting:
-
-```bash
-# check if pair 1 controller is available
-gwp pair status 1 -o json | jq '.controller.available'
-
-# detect version drift across all pairs
-gwp pair list -o json | jq '.[] | select(.versionDrift) | .names.systemNamespace'
-
-# get the GatewayClass name for a pair
-gwp pair info 1 -o json | jq -r '.gatewayClass'
 ```
+charts/
+  eg-pair/                          Helm chart (committed, //go:embed all:eg-pair)
+  crds/
+    gateway-api-standard.yaml       pre-rendered Gateway API standard CRDs
+    gateway-api-experimental.yaml   pre-rendered Gateway API experimental CRDs
+    envoy-gateway.yaml              pre-rendered EG CRDs
+```
+
+`charts/crds/` is gitignored and generated by `make generate-crds` at build
+time. `charts/eg-pair/` is committed. The `all:` prefix on the embed directive
+includes the gitignored subchart tarball (`gateway-helm-v*.tgz`).
 
 ---
 
 ## Implementation notes
 
-### Language and package layout
+### Package layout
 
 ```
-cmd/gwp/            binary entry point; bakes version via -ldflags
-names/              pure naming logic (no I/O); mirrors _helpers.tpl rules
-crd/                CRD detect + install logic
-pair/               pair install / delete / get / list / info
-gwpapi/             public embedding API (single import point)
+cmd/gwp/           binary entry point; bakes version via -ldflags
+cmd/gwp-gendocs/   doc generator (go run cmd/gwp-gendocs/main.go)
+names/             pure naming logic; mirrors _helpers.tpl; zero deps
+crd/               CRD detect + install
+pair/              pair Install/Delete/Get/List/Info; JSON-tagged Status
+gwpapi/            public Go embedding API
 internal/
-  kube/             exec kubectl wrapper (uses dio/sh)
-  helm/             exec helm wrapper (uses dio/sh)
-  cli/              cobra command tree
-  fake/             in-process kubectl/helm fakes for unit tests
-charts/
-  eg-pair/          Helm chart (committed, embedded via //go:embed all:eg-pair)
-  crds/             pre-rendered CRD YAML (gitignored, generated at build time)
+  kube/            exec kubectl via dio/sh
+  helm/            exec helm via dio/sh
+  cli/             cobra command tree; BuildRoot exported for gendocs
+  fake/            in-process fakes for unit tests
 ```
 
-### Helm invocation
+### Why exec Helm, not the Helm SDK
 
-The CLI execs `helm` via `dio/sh` rather than importing the Helm Go SDK.
-The SDK pulls in 50+ transitive dependencies and has breaking API changes
+The Helm Go SDK pulls 50+ transitive dependencies and has breaking API changes
 between minor versions. Exec keeps the dependency surface minimal: no
 `k8s.io/*` imports in the CLI package.
 
-### CRD embedding
-
-CRD YAML is pre-rendered at build time:
-
-```makefile
-make generate-crds   # helm template gateway-crds-helm | split by --set flags
-```
-
-The resulting files are embedded via `//go:embed all:crds`. At install time
-`gwp crds install` reads from memory and pipes to `kubectl apply --server-side`.
-No network access required after the binary is built.
-
-### Chart embedding
-
-`//go:embed all:eg-pair` embeds the full chart tree including
-`eg-pair/charts/gateway-helm-v1.8.0.tgz` (the `all:` prefix bypasses
-`.gitignore`). At install time `gwp pair install` extracts the chart to a temp
-dir and passes the path to `helm upgrade --install`.
-
-### Why the three controllerName/watch flags cannot be in the chart
+### Why the three controllerName/watch flags cannot live in the chart
 
 Helm resolves subchart values before template rendering. A parent chart template
 cannot compute a value and write it into a subchart's values block. The three
-required flags must be injected at install time by the caller (the CLI or
-Makefile). See design.md for the full explanation.
+`gateway-helm.*` flags must be injected at install time by the caller.
+
+### Keeping this doc in sync
+
+Flag tables in this file are copied from `docs/commands/` output. After changing
+any flag name, default, or description, run `make docs` and paste the updated
+blocks into this file.
 
 ---
 
@@ -426,7 +440,7 @@ Makefile). See design.md for the full explanation.
 
 `gwp preflight` -- pre-install cluster readiness check: RBAC, API server
 reachability, CRD state, GatewayClass name conflicts, controller name
-uniqueness. Useful before installing the first pair on an unfamiliar cluster.
+uniqueness.
 
 `gwp pair verify` -- post-install health check deeper than `pair status`:
 validates proxy readiness, tests HTTP connectivity through a temporary
