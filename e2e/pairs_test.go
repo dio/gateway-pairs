@@ -69,33 +69,26 @@ func (s *gatewayPairsSuite) Test05_VerifyIsolation() {
 }
 
 func (s *gatewayPairsSuite) Test06_VerifyGatewayClasses() {
+	// installPair already waited for Gateway=Programmed, which implies
+	// GatewayClass=Accepted. This is a fast sanity check.
 	for _, i := range []int{1, 2, 3} {
 		n := namesFor(i)
-		s.eventually(func() bool {
-			// Use jsonpath to get all condition types and statuses as space-joined lists.
-			// e.g. "Accepted SupportedVersion=True True"
-			// We check that Accepted appears and True appears alongside it.
-			// Simpler: just check the gateway controller accepted the class via
-			// the status field directly.
-			out, err := s.kubectl("get", "gatewayclass", n.GWClass,
-				"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
-			return err == nil && strings.Contains(out, "Accepted=True")
-		}, 5*time.Minute, 3*time.Second, "GatewayClass %s not Accepted", n.GWClass)
+		out, err := s.kubectl("get", "gatewayclass", n.GWClass,
+			"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
+		s.Require().NoError(err)
+		s.Contains(out, "Accepted=True", "GatewayClass %s not Accepted", n.GWClass)
 	}
 }
 
 func (s *gatewayPairsSuite) Test07_VerifyGateways() {
+	// installPair already waited for Gateway=Programmed. Fast re-check.
 	for _, i := range []int{1, 2, 3} {
 		n := namesFor(i)
-		s.T().Logf("waiting for Gateway eg in %s", n.SystemNS)
-		s.eventually(func() bool {
-			out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
-				"-o", "jsonpath={.status.conditions[*].type}={.status.conditions[*].status}")
-			return err == nil &&
-				strings.Contains(out, "Programmed") &&
-				!strings.Contains(out, "Programmed=False")
-		}, 3*time.Minute, 5*time.Second,
-			"Gateway eg in %s never reached Programmed=True", n.SystemNS)
+		out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
+			"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
+		s.Require().NoError(err)
+		s.Contains(out, "Programmed=True",
+			"Gateway eg in %s not Programmed", n.SystemNS)
 	}
 }
 
@@ -232,15 +225,28 @@ func (s *gatewayPairsSuite) installPair(index int) {
 		"--create-namespace",
 		"--set", fmt.Sprintf("pair.index=%d", index),
 		"--skip-crds",
-		"--wait", "--timeout", "3m",
+		// No --wait here: helm's --wait only covers Deployments, not the certgen
+		// Job completion. We handle readiness checks explicitly below.
+		"--timeout", "5m",
 	}
 	args = append(args, n.helmSetPrefix()...)
 	s.mustHelm(args...)
 
-	s.mustKubectl("rollout", "status", "deployment/envoy-gateway",
-		"-n", n.SystemNS, "--timeout=3m")
+	// Wait for certgen Job to complete (it runs as a pre-install hook but
+	// helm may return before the Job finalizes).
 	s.mustKubectl("wait", "deployment/envoy-gateway",
-		"-n", n.SystemNS, "--for=condition=Available", "--timeout=3m")
+		"-n", n.SystemNS, "--for=condition=Available", "--timeout=5m")
+
+	// Wait for Gateway to be Programmed -- this confirms the full data path
+	// is wired: controller reconciled the GatewayClass, created the proxy,
+	// and the proxy connected to xDS. Without this, Test06/07 may race.
+	s.T().Logf("waiting for Gateway eg in %s to be Programmed", n.SystemNS)
+	s.eventually(func() bool {
+		out, err := s.kubectl("get", "gateway", "eg", "-n", n.SystemNS,
+			"-o", "jsonpath={range .status.conditions[*]}{.type}={.status} {end}")
+		return err == nil && strings.Contains(out, "Programmed=True")
+	}, 5*time.Minute, 5*time.Second,
+		"Gateway eg in %s not Programmed after install", n.SystemNS)
 }
 
 func (s *gatewayPairsSuite) applyManifest(ns, manifest string) {

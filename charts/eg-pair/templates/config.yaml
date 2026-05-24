@@ -14,7 +14,7 @@ data:
     apiVersion: gateway.envoyproxy.io/v1alpha1
     kind: EnvoyGateway
     gateway:
-      controllerName: gateway.envoyproxy.io/gatewayclass-controller
+      controllerName: gateway.envoyproxy.io/{{ include "eg-pair.gatewayClassName" . }}
     provider:
       type: Kubernetes
       kubernetes:
