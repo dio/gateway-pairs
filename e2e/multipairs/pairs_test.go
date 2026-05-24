@@ -1,13 +1,12 @@
-//go:build e2e
+package multipairs_test
 
-package e2e_test
-
-// RUN_PAIRS_E2E=1 go test -v -count=1 -tags=e2e -run TestGatewayPairs ./...
+// RUN_E2E=1 go test -v -count=1 -run TestGatewayPairs ./multipairs/...
 // Override namespace prefix: PAIR_PREFIX=tr go test ...
 
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/dio/gateway-pairs/e2e/helper"
 )
 
 type gatewayPairsSuite struct {
@@ -22,8 +23,8 @@ type gatewayPairsSuite struct {
 }
 
 func TestGatewayPairs(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping e2e in short mode")
+	if os.Getenv("RUN_E2E") != "1" {
+		t.Skip("set RUN_E2E=1 to run")
 	}
 	suite.Run(t, new(gatewayPairsSuite))
 }
@@ -82,8 +83,8 @@ func (s *gatewayPairsSuite) Test07_VerifyGateways() {
 	// Programmed, then clean up. This validates the full EG reconcile path.
 	for _, i := range []int{1, 2, 3} {
 		n := namesFor(i)
-		s.applyManifest(n.DataplaneNS, testEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
-		s.applyManifest(n.DataplaneNS, testGatewayManifest(n.DataplaneNS, n.GWClass))
+		s.applyManifest(n.DataplaneNS, helper.TestEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
+		s.applyManifest(n.DataplaneNS, helper.TestGatewayManifest(n.DataplaneNS, n.GWClass))
 		s.eventually(func() bool {
 			out, err := s.kubectl("get", "gateway", "eg-test", "-n", n.DataplaneNS,
 				"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
@@ -100,8 +101,8 @@ func (s *gatewayPairsSuite) Test08_VerifyDataplaneProxies() {
 	// then clean up. Confirms the controller creates proxy resources correctly.
 	for _, i := range []int{1, 2, 3} {
 		n := namesFor(i)
-		s.applyManifest(n.DataplaneNS, testEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
-		s.applyManifest(n.DataplaneNS, testGatewayManifest(n.DataplaneNS, n.GWClass))
+		s.applyManifest(n.DataplaneNS, helper.TestEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
+		s.applyManifest(n.DataplaneNS, helper.TestGatewayManifest(n.DataplaneNS, n.GWClass))
 		s.T().Logf("waiting for proxy Deployment in %s", n.DataplaneNS)
 		s.eventually(func() bool {
 			out, err := s.kubectl("get", "deployments", "-n", n.DataplaneNS,
@@ -121,8 +122,8 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
 	n := namesFor(1)
 
 	// Apply test Gateway+EnvoyProxy into dataplaneNS (Layer 3 pattern).
-	s.applyManifest(n.DataplaneNS, testEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
-	s.applyManifest(n.DataplaneNS, testGatewayManifest(n.DataplaneNS, n.GWClass))
+	s.applyManifest(n.DataplaneNS, helper.TestEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
+	s.applyManifest(n.DataplaneNS, helper.TestGatewayManifest(n.DataplaneNS, n.GWClass))
 	s.eventually(func() bool {
 		out, err := s.kubectl("get", "gateway", "eg-test", "-n", n.DataplaneNS,
 			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
@@ -130,12 +131,12 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughPair1() {
 	}, 3*time.Minute, 5*time.Second, "test Gateway not Programmed")
 
 	// Echo backend in dataplaneNS.
-	s.applyManifest(n.DataplaneNS, echoDeploymentManifest(n.DataplaneNS))
-	s.applyManifest(n.DataplaneNS, echoServiceManifest(n.DataplaneNS))
+	s.applyManifest(n.DataplaneNS, helper.EchoDeploymentManifest(n.DataplaneNS))
+	s.applyManifest(n.DataplaneNS, helper.EchoServiceManifest(n.DataplaneNS))
 	s.mustKubectl("rollout", "status", "deployment/echo", "-n", n.DataplaneNS, "--timeout=90s")
 
 	// HTTPRoute in dataplaneNS referencing the test Gateway (same namespace).
-	s.applyManifest(n.DataplaneNS, httpRouteManifest("eg-test", n.DataplaneNS))
+	s.applyManifest(n.DataplaneNS, helper.HTTPRouteManifest("eg-test", n.DataplaneNS))
 
 	// Gateway Service lives in dataplaneNS (proxy is there -- GatewayNamespace mode).
 	gwSvc, err := s.findGatewayService(n.DataplaneNS)
@@ -371,7 +372,7 @@ func (s *gatewayPairsSuite) eventually(
 
 // ── manifest helpers ──────────────────────────────────────────────────────────
 
-func echoDeploymentManifest(ns string) string {
+func helper.EchoDeploymentManifest(ns string) string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -395,7 +396,7 @@ spec:
 `, ns)
 }
 
-func echoServiceManifest(ns string) string {
+func helper.EchoServiceManifest(ns string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -410,7 +411,7 @@ spec:
 `, ns)
 }
 
-func httpRouteManifest(gatewayName, ns string) string {
+func helper.HTTPRouteManifest(gatewayName, ns string) string {
 	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -430,7 +431,7 @@ spec:
 `, ns, gatewayName)
 }
 
-func testEnvoyProxyManifest(ns, gcName string) string {
+func helper.TestEnvoyProxyManifest(ns, gcName string) string {
 	return fmt.Sprintf(`apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
@@ -450,7 +451,7 @@ spec:
 `, ns)
 }
 
-func testGatewayManifest(ns, gcName string) string {
+func helper.TestGatewayManifest(ns, gcName string) string {
 	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
