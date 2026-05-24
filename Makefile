@@ -129,6 +129,10 @@ e2e: dep-update
 	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) PAIR_COUNT=$(PAIR_COUNT) RUN_E2E=1 \
 	  go test -v -count=1 -run TestGatewayPairs -timeout 30m ./multipairs/...
 
+## docs: generate per-command Markdown reference pages into docs/commands/
+docs:
+	go run cmd/gwp-gendocs/main.go
+
 ## e2e-all: run all e2e suites in parallel (requires --jobs/-j)
 e2e-all:
 	$(MAKE) -j3 e2e-simple e2e-simple-gwp e2e

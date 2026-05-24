@@ -43,6 +43,12 @@ var (
 
 // Execute builds and runs the root command.
 func Execute(info BuildInfo) error {
+	return BuildRoot(info).Execute()
+}
+
+// BuildRoot constructs the root cobra.Command. Exported so doc generators
+// can call it without running Execute.
+func BuildRoot(info BuildInfo) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "gwp",
 		Short:         "Manage Envoy Gateway controller+dataplane pairs",
@@ -73,7 +79,7 @@ func Execute(info BuildInfo) error {
 		newPairCmd(info),
 	)
 
-	return root.Execute()
+	return root
 }
 
 func effectivePrefix() string {
