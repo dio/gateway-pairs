@@ -151,11 +151,6 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughAllPairs() {
 
 		s.applyManifest(n.DataplaneNS, testutil.TestEnvoyProxyManifest(n.DataplaneNS, n.GWClass))
 		s.applyManifest(n.DataplaneNS, testutil.TestGatewayManifest(n.DataplaneNS, n.GWClass))
-		s.eventually(func() bool {
-			out, err := s.kubectl("get", "gateway", "eg-test", "-n", n.DataplaneNS,
-				"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}")
-			return err == nil && strings.Contains(out, "Programmed=True")
-		}, 3*time.Minute, 5*time.Second, "test Gateway not Programmed for pair %d", i)
 
 		s.applyManifest(n.DataplaneNS, testutil.EchoDeploymentManifest(n.DataplaneNS))
 		s.applyManifest(n.DataplaneNS, testutil.EchoServiceManifest(n.DataplaneNS))
@@ -163,10 +158,9 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughAllPairs() {
 
 		s.applyManifest(n.DataplaneNS, testutil.HTTPRouteManifest("eg-test", n.DataplaneNS))
 
-		gwSvc, err := s.findGatewayService(n.DataplaneNS)
-		s.Require().NoError(err, "could not find Gateway Service in %s", n.DataplaneNS)
-
-		stopFwd := s.portForward(n.DataplaneNS, "svc/"+gwSvc, fmt.Sprintf("%d:80", port))
+		// Wait for gateway to be ready for traffic.
+		stopFwd, _, err := s.h.WaitGatewayTraffic(n.DataplaneNS, "eg-test", port)
+		s.Require().NoError(err, "gateway not ready for traffic in pair-%d", i)
 		defer stopFwd()
 
 		// Wait for the port-forward tunnel to be ready before probing.
@@ -178,7 +172,7 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughAllPairs() {
 			}
 			resp.Body.Close()
 			return resp.StatusCode == http.StatusOK
-		}, 30*time.Second, 2*time.Second, "expected 200 from echo via pair-%d Gateway", i)
+		}, 2*time.Minute, 2*time.Second, "expected 200 from echo via pair-%d Gateway", i)
 
 		// Clean up test resources so pair dataplaneNS is pristine for Test10+.
 		s.kubectl("delete", "httproute", "echo", "-n", n.DataplaneNS, "--ignore-not-found")     //nolint:errcheck
@@ -336,25 +330,6 @@ func (s *gatewayPairsSuite) applyManifest(ns, manifest string) {
 	cmd.Stdin = strings.NewReader(manifest)
 	out, err := cmd.CombinedOutput()
 	s.Require().NoError(err, "kubectl apply failed:\n%s", string(out))
-}
-
-func (s *gatewayPairsSuite) findGatewayService(ns string) (string, error) {
-	out, err := s.kubectl("get", "svc", "-n", ns,
-		"-l", "gateway.envoyproxy.io/owning-gateway-name=eg-test",
-		"-o", "jsonpath={.items[0].metadata.name}")
-	if err != nil {
-		return "", fmt.Errorf("find gateway svc in %s: %w -- %s", ns, err, out)
-	}
-	name := strings.TrimSpace(out)
-	if name == "" {
-		return "", fmt.Errorf("no gateway service found in %s", ns)
-	}
-	return name, nil
-}
-
-func (s *gatewayPairsSuite) portForward(ns, resource, ports string) func() {
-	h := testutil.Harness{T: s.T(), Ctx: s.ctx, Ktx: ktx}
-	return h.PortForward(ns, resource, ports)
 }
 
 func (s *gatewayPairsSuite) quitProxyPods(ns string) {

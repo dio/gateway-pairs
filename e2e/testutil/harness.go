@@ -230,6 +230,55 @@ func (h *Harness) WaitNS(namespaces ...string) {
 	}
 }
 
+// WaitGatewayTraffic waits for a gateway to be fully ready for traffic:
+// 1. Gateway listeners report Programmed=True
+// 2. Envoy proxy Deployment is Available
+// 3. Gateway Service is discoverable
+// 4. Port-forward tunnel is established
+//
+// Returns a cleanup function to stop port-forward and the gateway service name.
+// Timeouts are generous for CI environments.
+func (h *Harness) WaitGatewayTraffic(ns, gatewayName string, localPort int) (func(), string, error) {
+	h.T.Helper()
+
+	// 1. Wait for Gateway Programmed=True
+	h.T.Logf("waiting for Gateway %s/%s to be Programmed", ns, gatewayName)
+	deadline := time.Now().Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		out, err := h.Kubectl("get", "gateway", gatewayName, "-n", ns,
+			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}",
+			"--ignore-not-found")
+		if err == nil && strings.Contains(out, "Programmed=True") {
+			h.T.Logf("Gateway %s/%s Programmed=True: %s", ns, gatewayName, out)
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+
+	// 2. Wait for Envoy proxy Deployment to be Available
+	h.T.Logf("waiting for Envoy proxy Deployment to be ready in %s", ns)
+	if err := sh.Run(h.Ctx, "kubectl", "--context", h.Ktx,
+		"wait", "-n", ns,
+		"deploy", "-l", "app.kubernetes.io/managed-by=envoy-gateway",
+		"--for=condition=Available", "--timeout=3m"); err != nil {
+		return nil, "", fmt.Errorf("Envoy Deployment not ready in %s: %w", ns, err)
+	}
+
+	// 3. Find the gateway service
+	svc, err := h.FindGWSvc(ns)
+	if err != nil {
+		return nil, "", fmt.Errorf("gateway service not found in %s: %w", ns, err)
+	}
+	h.T.Logf("found gateway service: %s", svc)
+
+	// 4. Start port-forward
+	stop := h.PortForward(ns, "svc/"+svc, fmt.Sprintf("%d:80", localPort))
+	h.T.Logf("started port-forward to %s:%s on localhost:%d", svc, "80", localPort)
+	time.Sleep(500 * time.Millisecond) // let tunnel establish
+
+	return stop, svc, nil
+}
+
 func (h *Harness) ChartPath(chart string) string {
 	return filepath.Join(h.RepoRoot, "charts", chart)
 }

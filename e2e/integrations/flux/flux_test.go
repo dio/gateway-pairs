@@ -55,37 +55,10 @@ func (s *fluxSuite) Test04_GatewayProgrammed() {
 	// HTTPRouteManifest(gatewayName, ns) -- gateway name is "eg-test" (from TestGatewayManifest)
 	s.Apply(dataplaneNS, testutil.HTTPRouteManifest("eg-test", dataplaneNS))
 
-	// Wait for listener-level Programmed=True.
-	// ClusterIP Gateways never show top-level Programmed=True (AddressNotAssigned).
-	// Use listener conditions instead.
-	s.Eventually(func() bool {
-		out, err := s.Kubectl("get", "gateway", "eg-test", "-n", dataplaneNS,
-			"-o", "jsonpath={range .status.listeners[*]}{range .conditions[*]}{.type}={.status} {end}{end}",
-			"--ignore-not-found")
-		if err == nil && strings.Contains(out, "Programmed=True") {
-			s.T().Logf("Gateway eg-test Programmed=True: %s", out)
-			return true
-		}
-		return false
-	}, 5*time.Minute, 5*time.Second, "Gateway eg-test listener not Programmed in %s", dataplaneNS)
-
-	// Verify Envoy proxy Deployment is ready before attempting traffic.
-	s.T().Logf("waiting for Envoy proxy Deployment to be ready in %s", dataplaneNS)
-	s.MustKubectl("wait", "-n", dataplaneNS,
-		"deploy", "-l", "app.kubernetes.io/managed-by=envoy-gateway",
-		"--for=condition=Available", "--timeout=3m")
-
-	// Find the EG-generated Service and port-forward to it.
-	svc, err := s.h.FindGWSvc(dataplaneNS)
-	s.Require().NoError(err, "EG-generated gateway service not found in %s", dataplaneNS)
-	s.T().Logf("found gateway service: %s", svc)
-
-	stop := s.PortForward(dataplaneNS, "svc/"+svc, "18080:80")
+	// Wait for gateway to be ready for traffic.
+	stop, svc, err := s.h.WaitGatewayTraffic(dataplaneNS, "eg-test", 18080)
+	s.Require().NoError(err, "gateway not ready for traffic in %s", dataplaneNS)
 	defer stop()
-	s.T().Logf("started port-forward to %s:%s", svc, "18080:80")
-
-	// Give port-forward tunnel a moment to establish.
-	time.Sleep(500 * time.Millisecond)
 
 	// Poll until port-forward tunnel is ready, then verify HTTP 200.
 	var lastErr string
