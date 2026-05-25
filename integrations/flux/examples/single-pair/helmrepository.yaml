@@ -1,0 +1,10 @@
+# Layer 1: HelmRepository for the eg-pair chart.
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: gateway-pairs
+  namespace: flux-system
+spec:
+  type: oci
+  url: oci://ghcr.io/dio/gateway-pairs/charts
+  interval: 30m

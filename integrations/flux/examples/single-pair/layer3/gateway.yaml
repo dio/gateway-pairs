@@ -1,0 +1,25 @@
+# Apply to tr-dataplane-1 after gwp pair install / HelmRelease is Ready.
+# kubectl apply -n tr-dataplane-1 -f layer3/
+#
+# Get coupling values:  gwp pair info 1
+#   gatewayClassName:   tr-1
+#   dataplaneNamespace: tr-dataplane-1
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: proxy
+  namespace: tr-dataplane-1
+spec:
+  gatewayClassName: tr-1
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: proxy   # must exist in the same namespace
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same

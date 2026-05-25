@@ -134,7 +134,7 @@ docs:
 	go run cmd/gwp-gendocs/main.go
 
 ## e2e-flux: run Flux CD integration e2e (local k3d + local OCI registry, no remote Git)
-e2e-flux: dep-update
+e2e-flux: build
 	cd e2e && RUN_E2E=1 \
 	  go test -v -count=1 -run TestFluxIntegration -timeout 25m ./integrations/flux/...
 

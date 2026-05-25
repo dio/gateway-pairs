@@ -1,0 +1,12 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: proxy
+  namespace: tr-dataplane-1
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: proxy
+        type: ClusterIP

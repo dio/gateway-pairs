@@ -12,9 +12,6 @@ charts/crds/*.yaml
 # Subchart tarballs (fetched by helm dependency update, not committed)
 charts/eg-pair/charts/
 
-
-
-
 # Go workspace sum (generated)
 go.work.sum
 
@@ -23,3 +20,5 @@ go.work.sum
 .idea/
 *.swp
 docs/commands/
+.graymatter/
+.hermes/

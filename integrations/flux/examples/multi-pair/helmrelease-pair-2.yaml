@@ -1,0 +1,50 @@
+# Pair 2 -- isolated from pair 1: separate controller, separate GatewayClass,
+# separate namespaces. Changing this HelmRelease cannot affect pair 1.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: eg-pair-2
+  namespace: flux-system
+spec:
+  interval: 10m
+  targetNamespace: tr-system-2
+  install:
+    createNamespace: true
+    crds: Skip
+    remediation:
+      retries: 3
+  upgrade:
+    crds: Skip
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: eg-pair
+      version: "0.x"
+      sourceRef:
+        kind: HelmRepository
+        name: gateway-pairs
+        namespace: flux-system
+      interval: 10m
+  values:
+    pair:
+      index: 2
+      namePrefix: tr
+    controller:
+      topologyInjector: false
+    gateway-helm:
+      config:
+        envoyGateway:
+          gateway:
+            controllerName: gateway.envoyproxy.io/tr-2
+          provider:
+            kubernetes:
+              deploy:
+                type: GatewayNamespace
+              watch:
+                type: Namespaces
+                namespaces:
+                  - tr-system-2
+                  - tr-dataplane-2
+      topologyInjector:
+        enabled: false

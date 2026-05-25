@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: gateway-api-crds
+  namespace: flux-system
+spec:
+  type: oci
+  url: oci://docker.io/envoyproxy
+  interval: 30m

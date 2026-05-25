@@ -1,0 +1,39 @@
+# Install Gateway API + EG CRDs via Flux.
+#
+# Apply this BEFORE any eg-pair HelmRelease. All pair HelmReleases must
+# declare "dependsOn" referencing this release.
+#
+# On provider-managed clusters (GKE, AKS): Gateway API CRDs are managed by
+# the cloud provider. Skip this file and use "gwp crds install" instead,
+# which detects provider-managed CRDs and only installs EG-specific ones.
+# In that case, remove "dependsOn" from pair HelmReleases or point it at a
+# dummy placeholder ConfigMap.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: gateway-api-crds
+  namespace: flux-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: gateway-crds-helm
+      version: "v1.8.0"
+      sourceRef:
+        kind: HelmRepository
+        name: gateway-api-crds
+        namespace: flux-system
+      interval: 30m
+  install:
+    # CreateReplace: create CRDs if absent, replace if present.
+    # Safe for self-managed clusters. Use Skip on provider-managed clusters.
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    crds:
+      gatewayAPI:
+        enabled: true
+        channel: standard   # use "experimental" to include alpha CRDs
+      envoyGateway:
+        enabled: true

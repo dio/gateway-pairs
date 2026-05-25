@@ -1,0 +1,16 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: default
+  namespace: tr-dataplane-1
+spec:
+  parentRefs:
+  - name: proxy
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: my-service   # replace with your backend Service name
+      port: 80

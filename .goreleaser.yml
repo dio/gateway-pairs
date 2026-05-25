@@ -74,3 +74,6 @@ brews:
       bin.install "gwp"
     test: |
       system "#{bin}/gwp", "version"
+    # skip_upload if the homebrew-tap token is not set -- prevents release
+    # failure from blocking the publish-charts job which runs after goreleaser.
+    skip_upload: "{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}"

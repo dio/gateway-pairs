@@ -1,0 +1,49 @@
+# Pair 1 -- identical to single-pair except topologyInjector: false is required.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: eg-pair-1
+  namespace: flux-system
+spec:
+  interval: 10m
+  targetNamespace: tr-system-1
+  install:
+    createNamespace: true
+    crds: Skip
+    remediation:
+      retries: 3
+  upgrade:
+    crds: Skip
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: eg-pair
+      version: "0.x"
+      sourceRef:
+        kind: HelmRepository
+        name: gateway-pairs
+        namespace: flux-system
+      interval: 10m
+  values:
+    pair:
+      index: 1
+      namePrefix: tr
+    controller:
+      topologyInjector: false   # MUST be false for multi-pair
+    gateway-helm:
+      config:
+        envoyGateway:
+          gateway:
+            controllerName: gateway.envoyproxy.io/tr-1
+          provider:
+            kubernetes:
+              deploy:
+                type: GatewayNamespace
+              watch:
+                type: Namespaces
+                namespaces:
+                  - tr-system-1
+                  - tr-dataplane-1
+      topologyInjector:
+        enabled: false

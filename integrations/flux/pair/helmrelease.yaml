@@ -1,0 +1,69 @@
+# Annotated HelmRelease template for one eg-pair.
+#
+# Copy this file for each pair. Edit the four places marked [PAIR-SPECIFIC].
+#
+# The three gateway-helm values (controllerName, watch.namespaces) cannot be
+# auto-derived by the chart -- Helm resolves subchart values before rendering.
+# They are computed from (namePrefix, index) and written statically here.
+# Use "gwp pair info <index>" to confirm the exact values for an existing pair.
+#
+# Naming derivation (prefix=tr, index=1):
+#   systemNS:    tr-system-1     ({prefix}-system-{index})
+#   dataplaneNS: tr-dataplane-1  ({prefix}-dataplane-{index})
+#   gwClass:     tr-1            ({prefix}-{index})
+#   ctrlName:    gateway.envoyproxy.io/tr-1
+#
+# Teardown: delete Layer 3 resources (Gateways) BEFORE deleting this HelmRelease.
+# See integrations/README.md for the safe teardown sequence.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: eg-pair-1             # [PAIR-SPECIFIC] eg-pair-{index}
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    # Remove this block if CRDs are managed by gwp (not via Flux).
+    - name: gateway-api-crds
+      namespace: flux-system
+  targetNamespace: tr-system-1  # [PAIR-SPECIFIC] {prefix}-system-{index}
+  install:
+    createNamespace: true
+    crds: Skip                  # CRDs owned by gateway-api-crds HelmRelease
+    remediation:
+      retries: 3
+  upgrade:
+    crds: Skip
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: eg-pair
+      version: "0.x"            # pin to "0.1.0" for production
+      sourceRef:
+        kind: HelmRepository
+        name: gateway-pairs
+        namespace: flux-system
+      interval: 10m
+  values:
+    pair:
+      index: 1                  # [PAIR-SPECIFIC]
+      namePrefix: tr
+    controller:
+      topologyInjector: false   # required for multi-pair; safe to enable for single-pair
+    gateway-helm:
+      config:
+        envoyGateway:
+          gateway:
+            controllerName: gateway.envoyproxy.io/tr-1  # [PAIR-SPECIFIC] gateway.envoyproxy.io/{prefix}-{index}
+          provider:
+            kubernetes:
+              deploy:
+                type: GatewayNamespace
+              watch:
+                type: Namespaces
+                namespaces:
+                  - tr-system-1     # [PAIR-SPECIFIC] {prefix}-system-{index}
+                  - tr-dataplane-1  # [PAIR-SPECIFIC] {prefix}-dataplane-{index}
+      topologyInjector:
+        enabled: false
