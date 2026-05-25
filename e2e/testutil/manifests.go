@@ -106,6 +106,44 @@ spec:
       port: 80
 `))
 
+var envoyPatchPolicyTmpl = template.Must(template.New("epp").Parse(`apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: epp-test
+  namespace: {{ .Namespace }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: eg-test
+  type: JSONPatch
+  jsonPatches:
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    # listener name: <namespace>/<gateway-name>/<listener-name>
+    name: {{ .Namespace }}/eg-test/http
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/local_reply_config"
+      value:
+        mappers:
+        - filter:
+            status_code_filter:
+              comparison:
+                op: EQ
+                value:
+                  default_value: 404
+                  runtime_key: key_b
+          status_code: 406
+          body:
+            inline_string: "epp-patched"
+`))
+
+// EnvoyPatchPolicyManifest returns an EnvoyPatchPolicy that maps 404 → 406.
+// Used in e2e to verify enableEnvoyPatchPolicy=true is effective.
+func EnvoyPatchPolicyManifest(ns string) string {
+	return must(envoyPatchPolicyTmpl, struct{ Namespace string }{ns})
+}
+
 func TestEnvoyProxyManifest(ns, _ string) string {
 	return must(testEnvoyProxyTmpl, struct{ Namespace string }{ns})
 }

@@ -4,6 +4,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -198,6 +199,21 @@ func (h *Harness) QuitProxyPods(ns string, baseLocalPort int) {
 			"--ignore-not-found")
 		return err == nil && strings.TrimSpace(out) == "[]"
 	}, 30*time.Second, 1*time.Second)
+}
+
+// GWP runs the gwp binary (resolved from GWP_BIN env or bin/gwp in repo root)
+// and returns (combined output, error).
+func (h *Harness) GWP(args ...string) (string, error) {
+	bin := os.Getenv("GWP_BIN")
+	if bin == "" && h.RepoRoot != "" {
+		bin = filepath.Join(h.RepoRoot, "bin", "gwp")
+	}
+	if bin == "" {
+		return "", fmt.Errorf("GWP_BIN not set and RepoRoot not configured")
+	}
+	all := append([]string{"--context", h.Ktx}, args...)
+	out, err := sh.Output(h.Ctx, bin, all...)
+	return out, err
 }
 
 // WaitNS polls until all given namespaces are gone (max 2 minutes).

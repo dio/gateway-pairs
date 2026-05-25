@@ -72,6 +72,21 @@ func (s *gatewayPairsSuite) Test05_VerifyIsolation() {
 	}
 }
 
+// Test05b_VerifyAllPairs runs gwp pair verify for every pair.
+// Executed after the pairs are installed; confirms the CLI health checks
+// agree with kubectl-level observations before proceeding to traffic tests.
+func (s *gatewayPairsSuite) Test05b_VerifyAllPairs() {
+	for _, i := range pairIndices() {
+		n := namesFor(i)
+		s.T().Logf("verifying pair %d via gwp pair verify", i)
+
+		out, err := s.gwp("--prefix", n.prefix, "pair", "verify", fmt.Sprintf("%d", i))
+		s.T().Logf("gwp pair verify %d:\n%s", i, out)
+		s.Require().NoError(err, "gwp pair verify %d should exit 0", i)
+		s.Contains(out, "healthy", "pair verify %d should report healthy", i)
+	}
+}
+
 func (s *gatewayPairsSuite) Test06_VerifyGatewayClasses() {
 	// installPair already waited for GatewayClass=Accepted. Fast sanity check.
 	for _, i := range pairIndices() {
@@ -347,6 +362,13 @@ func (s *gatewayPairsSuite) quitProxyPods(ns string) {
 	// baseLocalPort 19100+ avoids conflicts with gateway port-forward (18080+).
 	h := testutil.Harness{T: s.T(), Ctx: s.ctx, Ktx: ktx}
 	h.QuitProxyPods(ns, 19100)
+}
+
+// gwp runs the gwp binary with the given args and returns stdout+stderr.
+// Uses the binary path from the GWP_BIN env (set by make e2e).
+func (s *gatewayPairsSuite) gwp(args ...string) (string, error) {
+	h := testutil.Harness{T: s.T(), Ctx: s.ctx, Ktx: ktx, RepoRoot: s.repoRoot}
+	return h.GWP(args...)
 }
 
 func (s *gatewayPairsSuite) verifyGatewayAPICRDs() {
