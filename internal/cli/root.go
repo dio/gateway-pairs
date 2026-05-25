@@ -17,9 +17,11 @@ import (
 
 	"github.com/dio/gateway-pairs/crd"
 	"github.com/dio/gateway-pairs/gwpapi"
+	"github.com/dio/gateway-pairs/gwpcharts"
 	"github.com/dio/gateway-pairs/internal/kube"
 	"github.com/dio/gateway-pairs/names"
 	"github.com/dio/gateway-pairs/pair"
+	"github.com/dio/gateway-pairs/preflight"
 )
 
 // BuildInfo carries version metadata baked in at link time.
@@ -77,6 +79,8 @@ func BuildRoot(info BuildInfo) *cobra.Command {
 		newVersionCmd(info),
 		newCRDsCmd(),
 		newPairCmd(info),
+		newPreflightCmd(),
+		newChartsCmd(),
 	)
 
 	return root
@@ -234,6 +238,7 @@ func newPairCmd(info BuildInfo) *cobra.Command {
 		newPairStatusCmd(info),
 		newPairListCmd(),
 		newPairInfoCmd(),
+		newPairVerifyCmd(),
 	)
 	return cmd
 }
@@ -495,3 +500,174 @@ func parseIndex(s string) (int, error) {
 
 // ensure os is used (printPairStatus previously used os.Stdout directly -- now uses w parameter)
 var _ = os.Stdout
+
+// ── preflight ─────────────────────────────────────────────────────────────────
+
+func newPreflightCmd() *cobra.Command {
+	var pairIndex int
+	var unsafeCtx bool
+
+	cmd := &cobra.Command{
+		Use:   "preflight",
+		Short: "Run pre-install cluster readiness checks",
+		Long: `Runs a battery of checks before installing anything:
+  1. Context safety (k3d vs production)
+  2. API server reachable
+  3. Current user RBAC (create namespaces, clusterroles, clusterrolebindings)
+  4. Gateway API CRD state
+  5. Envoy Gateway CRD state
+  6-8. Pair-specific conflict checks (GatewayClass, controllerName, namespaces)
+       -- only when --pair is given
+
+Exits 0 if no failures (warnings are allowed). Exits 1 on any failure.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := context.Background()
+			k := &kube.Client{Context: globalContext, Kubeconfig: globalKubeconfig}
+			w := cmd.OutOrStdout()
+
+			sfx, useSuffix := effectiveSuffix(pairIndex)
+			r, err := preflight.Run(ctx, k, preflight.Options{
+				PairIndex:     pairIndex,
+				Prefix:        effectivePrefix(),
+				Suffix:        sfx,
+				UseSuffix:     useSuffix,
+				UnsafeContext: unsafeCtx,
+				Out:           w,
+			})
+			if err != nil {
+				return err
+			}
+
+			var next []string
+			if r.Failures == 0 && len(r.Checks) > 0 {
+				last := r.Checks[len(r.Checks)-1]
+				if last.Name == "eg-crds" && last.Status == preflight.StatusWarn {
+					next = append(next, "gwp crds install")
+				}
+				if pairIndex > 0 {
+					next = append(next, fmt.Sprintf("gwp pair install %d", pairIndex))
+				}
+			}
+
+			if globalOutput == "json" {
+				return emit(w, r, func(w io.Writer) { preflight.Print(w, r, next) })
+			}
+			preflight.Print(w, r, next)
+			if r.Failures > 0 {
+				return fmt.Errorf("preflight failed: %d failure(s)", r.Failures)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&pairIndex, "pair", 0,
+		"pair index to check for conflicts (enables checks 6-8)")
+	cmd.Flags().BoolVar(&unsafeCtx, "unsafe-context", false,
+		"allow non-k3d contexts (still warns)")
+	return cmd
+}
+
+// ── charts ────────────────────────────────────────────────────────────────────
+
+func newChartsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "charts",
+		Short: "Inspect and export embedded Helm charts",
+	}
+	cmd.AddCommand(newChartsListCmd(), newChartsExportCmd(), newChartsShowCmd())
+	return cmd
+}
+
+func newChartsListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List embedded charts and CRD bundle versions",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			r, err := gwpcharts.List()
+			if err != nil {
+				return err
+			}
+			return emit(cmd.OutOrStdout(), r, func(w io.Writer) { gwpcharts.Print(w, r) })
+		},
+	}
+}
+
+func newChartsExportCmd() *cobra.Command {
+	var outDir string
+	cmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export embedded charts to a directory",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := gwpcharts.Export(outDir); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Charts exported to %s/\n", outDir)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&outDir, "output-dir", "./gwp-charts",
+		"destination directory for exported charts")
+	return cmd
+}
+
+func newChartsShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show <chart>",
+		Short: "Print default values for an embedded chart",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			values, err := gwpcharts.ShowValues(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), values)
+			return nil
+		},
+	}
+}
+
+// ── pair verify ───────────────────────────────────────────────────────────────
+
+func newPairVerifyCmd() *cobra.Command {
+	var diagnose bool
+	cmd := &cobra.Command{
+		Use:   "verify <index>",
+		Short: "Re-run post-install health checks without reinstalling",
+		Long: `Verifies pair health: controller Available, GatewayClass Accepted,
+L3 Gateways Programmed. Exits 0 when healthy, 1 when any check fails.
+
+With --diagnose: on failure, prints ConfigMap watch list, tokenreviews
+binding, and last controller log lines to help identify the root cause.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			index, err := parseIndex(args[0])
+			if err != nil {
+				return err
+			}
+			ctx := context.Background()
+			k := &kube.Client{Context: globalContext, Kubeconfig: globalKubeconfig}
+			w := cmd.OutOrStdout()
+
+			sfx, useSuffix := effectiveSuffix(index)
+			r, err := pair.Verify(ctx, k, index, pair.VerifyOptions{
+				Prefix:    effectivePrefix(),
+				Suffix:    sfx,
+				UseSuffix: useSuffix,
+				Diagnose:  diagnose,
+				Out:       w,
+			})
+			if err != nil {
+				return err
+			}
+			if err := emit(w, r, func(w io.Writer) { pair.PrintVerifyResult(w, r) }); err != nil {
+				return err
+			}
+			if !r.Healthy {
+				return fmt.Errorf("pair %d not healthy", index)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&diagnose, "diagnose", false,
+		"on failure, print ConfigMap, RBAC, and controller log diagnostics")
+	return cmd
+}

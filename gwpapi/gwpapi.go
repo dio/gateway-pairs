@@ -13,7 +13,9 @@
 //	if err := c.PairInstall(ctx, 1, gwpapi.PairInstallOptions{}); err != nil {
 //	    log.Fatal(err)
 //	}
-//	statuses, err := c.PairList(ctx)
+//	if ok, _ := c.Preflight(ctx, gwpapi.PreflightOptions{PairIndex: 1}); !ok { ... }
+//	if r, _ := c.PairVerify(ctx, 1, gwpapi.PairVerifyOptions{}); !r.Healthy { ... }
+//	list, _ := c.ChartsList()
 package gwpapi
 
 import (
@@ -23,10 +25,12 @@ import (
 	"time"
 
 	"github.com/dio/gateway-pairs/crd"
+	"github.com/dio/gateway-pairs/gwpcharts"
 	"github.com/dio/gateway-pairs/internal/helm"
 	"github.com/dio/gateway-pairs/internal/kube"
 	"github.com/dio/gateway-pairs/names"
 	"github.com/dio/gateway-pairs/pair"
+	"github.com/dio/gateway-pairs/preflight"
 )
 
 // Options configures the gwpapi Client.
@@ -47,9 +51,9 @@ type Options struct {
 
 // Client is the main entry point for embedding gwp operations.
 type Client struct {
-	opts   Options
-	kube   *kube.Client
-	helm   *helm.Client
+	opts Options
+	kube *kube.Client
+	helm *helm.Client
 }
 
 // New creates a Client with the given options.
@@ -133,7 +137,7 @@ func (c *Client) PairInstall(ctx context.Context, index int, opts PairInstallOpt
 	})
 }
 
-// PairDelete uninstalls pair index.
+// PairDelete uninstalls pair index using the correct teardown sequence.
 func (c *Client) PairDelete(ctx context.Context, index int, out io.Writer) error {
 	return pair.Delete(ctx, c.helm, c.kube, index, c.opts.Prefix, c.opts.Suffix, c.opts.UseSuffix, out)
 }
@@ -151,4 +155,83 @@ func (c *Client) PairList(ctx context.Context) ([]*PairStatus, error) {
 // PairInfo returns the coupling fields needed to write Layer 3 manifests for pair index.
 func (c *Client) PairInfo(index int) names.Pair {
 	return pair.Info(c.opts.Prefix, c.opts.Suffix, c.opts.UseSuffix, index)
+}
+
+// PairVerifyResult is re-exported for callers that import only the api package.
+type PairVerifyResult = pair.VerifyResult
+
+// PairVerifyOptions controls PairVerify behaviour.
+type PairVerifyOptions struct {
+	// Diagnose, when true, appends diagnostic output on failure.
+	Diagnose bool
+	// Out receives progress and diagnostic output. Default: io.Discard.
+	Out io.Writer
+}
+
+// PairVerify re-runs post-install health checks for pair index without reinstalling.
+// Returns a VerifyResult; result.Healthy is true only when all checks pass.
+func (c *Client) PairVerify(ctx context.Context, index int, opts PairVerifyOptions) (*PairVerifyResult, error) {
+	return pair.Verify(ctx, c.kube, index, pair.VerifyOptions{
+		Prefix:    c.opts.Prefix,
+		Suffix:    c.opts.Suffix,
+		UseSuffix: c.opts.UseSuffix,
+		Diagnose:  opts.Diagnose,
+		Out:       opts.Out,
+	})
+}
+
+// ── Preflight ─────────────────────────────────────────────────────────────────
+
+// PreflightResult is re-exported for callers that import only the api package.
+type PreflightResult = preflight.Result
+
+// PreflightCheck is re-exported for callers that import only the api package.
+type PreflightCheck = preflight.Check
+
+// PreflightOptions controls which preflight checks to run.
+type PreflightOptions struct {
+	// PairIndex, when > 0, enables pair-specific conflict checks (6-8).
+	PairIndex int
+	// UnsafeContext suppresses the hard block on non-k3d contexts (still warns).
+	UnsafeContext bool
+	// Out receives progress output. Default: io.Discard.
+	Out io.Writer
+}
+
+// Preflight runs pre-install cluster readiness checks.
+// Returns (result, error). The result summarises all check outcomes; error is
+// non-nil only on internal failures (not on check failures -- check result.Failures).
+func (c *Client) Preflight(ctx context.Context, opts PreflightOptions) (*PreflightResult, error) {
+	return preflight.Run(ctx, c.kube, preflight.Options{
+		PairIndex:     opts.PairIndex,
+		Prefix:        c.opts.Prefix,
+		Suffix:        c.opts.Suffix,
+		UseSuffix:     c.opts.UseSuffix,
+		UnsafeContext: opts.UnsafeContext,
+		Out:           opts.Out,
+	})
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+
+// ChartsListResult is re-exported for callers that import only the api package.
+type ChartsListResult = gwpcharts.ListResult
+
+// ChartsList returns metadata about all embedded charts and CRD bundles.
+// No cluster access required.
+func (c *Client) ChartsList() (*ChartsListResult, error) {
+	return gwpcharts.List()
+}
+
+// ChartsExport extracts the embedded eg-pair chart tree to dir.
+// No cluster access required.
+func (c *Client) ChartsExport(dir string) error {
+	return gwpcharts.Export(dir)
+}
+
+// ChartsShowValues returns the default values.yaml for the named chart.
+// Currently only "eg-pair" is supported.
+// No cluster access required.
+func (c *Client) ChartsShowValues(name string) (string, error) {
+	return gwpcharts.ShowValues(name)
 }
