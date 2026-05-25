@@ -56,7 +56,7 @@ func (s *fluxSuite) Test04_GatewayProgrammed() {
 	s.Apply(dataplaneNS, testutil.HTTPRouteManifest("eg-test", dataplaneNS))
 
 	// Wait for gateway to be ready for traffic.
-	stop, svc, err := s.h.WaitGatewayTraffic(dataplaneNS, "eg-test", 18080)
+	stop, _, err := s.h.WaitGatewayTraffic(dataplaneNS, "eg-test", 18080)
 	s.Require().NoError(err, "gateway not ready for traffic in %s", dataplaneNS)
 	defer stop()
 

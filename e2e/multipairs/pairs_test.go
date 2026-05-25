@@ -159,7 +159,8 @@ func (s *gatewayPairsSuite) Test09_TrafficThroughAllPairs() {
 		s.applyManifest(n.DataplaneNS, testutil.HTTPRouteManifest("eg-test", n.DataplaneNS))
 
 		// Wait for gateway to be ready for traffic.
-		stopFwd, _, err := s.h.WaitGatewayTraffic(n.DataplaneNS, "eg-test", port)
+		h := testutil.Harness{T: s.T(), Ctx: s.ctx, Ktx: ktx, RepoRoot: s.repoRoot}
+		stopFwd, _, err := h.WaitGatewayTraffic(n.DataplaneNS, "eg-test", port)
 		s.Require().NoError(err, "gateway not ready for traffic in pair-%d", i)
 		defer stopFwd()
 
