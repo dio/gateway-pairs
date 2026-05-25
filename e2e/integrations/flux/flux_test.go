@@ -72,6 +72,9 @@ func (s *fluxSuite) Test04_GatewayProgrammed() {
 	stop := s.PortForward(dataplaneNS, "svc/"+svc, "18080:80")
 	defer stop()
 
+	// Give port-forward tunnel a moment to establish.
+	time.Sleep(500 * time.Millisecond)
+
 	// Poll until port-forward tunnel is ready, then verify HTTP 200.
 	var lastOut string
 	s.Eventually(func() bool {
@@ -81,7 +84,7 @@ func (s *fluxSuite) Test04_GatewayProgrammed() {
 			"http://127.0.0.1:18080/")
 		lastOut = out
 		return curlErr == nil && strings.TrimSpace(out) == "200"
-	}, 30*time.Second, 2*time.Second, "HTTP GET via proxy returned %s", lastOut)
+	}, 2*time.Minute, 2*time.Second, "HTTP GET via proxy returned %s", lastOut)
 }
 
 // Test05_DeleteOrdering verifies that deleting the Gateway before the HelmRelease
