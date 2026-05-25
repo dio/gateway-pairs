@@ -15,6 +15,7 @@ and pre-rendered CRD YAML so no OCI registry access is needed at install time.
 ```
 gwp
   version
+  preflight
   crds
     detect
     install
@@ -22,8 +23,13 @@ gwp
     install <index>
     delete  <index>
     status  [index]
+    verify  <index>
     info    <index>
     list
+  charts
+    list
+    export
+    show <chart>
 ```
 
 ---
@@ -398,6 +404,188 @@ includes the gitignored subchart tarball (`gateway-helm-v*.tgz`).
 
 ---
 
+## gwp preflight
+
+Run pre-install cluster readiness checks.
+
+### Synopsis
+
+Runs a battery of checks before installing anything:
+  1. Context safety (k3d vs production)
+  2. API server reachable
+  3. Current user RBAC (create namespaces, clusterroles, clusterrolebindings)
+  4. Gateway API CRD state
+  5. Envoy Gateway CRD state
+  6-8. Pair-specific conflict checks (GatewayClass, controllerName, namespaces)
+       -- only when --pair is given
+
+Exits 0 if no failures (warnings are allowed). Exits 1 on any failure.
+
+```
+gwp preflight [flags]
+```
+
+### Options
+
+```
+  -h, --help             help for preflight
+      --pair int         pair index to check for conflicts (enables checks 6-8)
+      --unsafe-context   allow non-k3d contexts (still warns)
+```
+
+**Check details:**
+
+| # | Name | Block? | Notes |
+|---|---|---|---|
+| 1 | context-safety | fail (warn with `--unsafe-context`) | k3d contexts pass; others warn/block |
+| 2 | server-reachable | fail | Parses `kubectl version --output=json` |
+| 3 | rbac | fail | SelfSubjectAccessReview for namespaces, clusterroles, clusterrolebindings |
+| 4 | gateway-api-crds | warn | Not-installed is a warning; provider-managed is a warning; channel mismatch is a fail |
+| 5 | eg-crds | warn | Not installed warns with hint to run `gwp crds install` |
+| 6 | gatewayclass-conflict | fail | Only with `--pair` |
+| 7 | controller-name-conflict | fail | Scans all `envoy-gateway-config` ConfigMaps cluster-wide |
+| 8 | namespace-conflict | warn/fail | Helm-managed existing NS: warn; non-Helm: fail |
+
+**Example output:**
+
+```
+[OK]   context: k3d-gw-pairs-e2e (k3d)
+[OK]   server reachable: v1.32.2
+[OK]   can create namespaces, clusterroles, clusterrolebindings
+[OK]   gateway-api CRDs not installed -- will install
+       run: gwp crds install
+[WARN] envoy-gateway CRDs not installed
+       run: gwp crds install
+[OK]   GatewayClass tr-1 not found
+[OK]   controllerName gateway.envoyproxy.io/tr-1 not in use
+[OK]   namespace tr-system-1 does not exist
+[OK]   namespace tr-dataplane-1 does not exist
+
+1 warning(s), 0 failures. Ready to install.
+
+  gwp crds install
+  gwp pair install 1
+```
+
+---
+
+## gwp pair verify
+
+Re-run post-install health checks without reinstalling.
+
+### Synopsis
+
+Verifies pair health: controller Available, GatewayClass Accepted,
+L3 Gateways Programmed. Exits 0 when healthy, 1 when any check fails.
+
+With --diagnose: on failure, prints ConfigMap watch list, tokenreviews
+binding, and last controller log lines to help identify the root cause.
+
+```
+gwp pair verify <index> [flags]
+```
+
+### Options
+
+```
+      --diagnose   on failure, print ConfigMap, RBAC, and controller log diagnostics
+  -h, --help       help for verify
+```
+
+**Example output:**
+
+```
+Verifying pair 1 (tr-1)...
+  controller-available                     ok
+  gatewayclass-accepted                    ok
+  gateway-eg-test-programmed               ok
+
+Pair 1 healthy.
+```
+
+With `--diagnose` on failure:
+
+```
+Verifying pair 1 (tr-1)...
+  controller-available                     FAIL
+    tr-system-1/envoy-gateway replicas: 0/1
+
+--- Diagnostics for pair tr-1 ---
+
+envoy-gateway-config (relevant fields):
+  controllerName: gateway.envoyproxy.io/tr-1
+  ...
+
+Controller logs (last 20 lines):
+...
+```
+
+---
+
+## gwp charts
+
+Inspect and export the embedded Helm charts.
+
+### gwp charts list
+
+```
+gwp charts list [flags]
+```
+
+Lists embedded charts and CRD bundles. No cluster access required.
+
+**Example output:**
+
+```
+CHART                VERSION      APP-VERSION
+eg-pair              0.0.0-dev    0.0.0-dev
+
+Embedded CRD bundles:
+  envoy-gateway
+  gateway-api-experimental (experimental)
+  gateway-api-standard (standard)
+```
+
+### gwp charts export
+
+```
+gwp charts export [flags]
+```
+
+### Options
+
+```
+      --output-dir string   destination directory for exported charts (default "./gwp-charts")
+```
+
+Extracts the embedded `eg-pair` chart tree to a directory. Useful for
+operators who prefer direct Helm workflows or need to inspect templates.
+
+```bash
+gwp charts export --output-dir ./my-charts
+cd my-charts
+helm upgrade --install eg-pair-1 ./eg-pair \
+  --namespace tr-system-1 --create-namespace \
+  --set pair.index=1 \
+  --set "gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-1" \
+  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces" \
+  --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-1,tr-dataplane-1}"
+```
+
+### gwp charts show
+
+```
+gwp charts show <chart> [flags]
+```
+
+Prints the `values.yaml` for the named chart. Currently only `eg-pair` is supported.
+
+```bash
+gwp charts show eg-pair
+```
+
+---
+
 ## Implementation notes
 
 ### Package layout
@@ -433,15 +621,3 @@ cannot compute a value and write it into a subchart's values block. The three
 Flag tables in this file are copied from `docs/commands/` output. After changing
 any flag name, default, or description, run `make docs` and paste the updated
 blocks into this file.
-
----
-
-## Future work
-
-`gwp preflight` -- pre-install cluster readiness check: RBAC, API server
-reachability, CRD state, GatewayClass name conflicts, controller name
-uniqueness.
-
-`gwp pair verify` -- post-install health check deeper than `pair status`:
-validates proxy readiness, tests HTTP connectivity through a temporary
-Gateway+HTTPRoute, checks controllerName isolation between pairs.

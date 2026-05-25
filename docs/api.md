@@ -1,6 +1,6 @@
 # API
 
-The `api` package exposes all gwp operations as a Go API for tools or
+The `gwpapi` package exposes all gwp operations as a Go API for tools or
 controllers that want to embed gateway-pairs lifecycle management without
 shelling out to the `gwp` binary.
 
@@ -18,6 +18,12 @@ c := gwpapi.New(gwpapi.Options{
     Prefix:      "tr",
 })
 
+// Pre-install checks
+r, _ := c.Preflight(ctx, gwpapi.PreflightOptions{PairIndex: 1})
+if r.Failures > 0 {
+    log.Fatalf("preflight failed: %d failure(s)", r.Failures)
+}
+
 // Install CRDs
 if err := c.CRDInstall(ctx, gwpapi.CRDInstallOptions{}); err != nil {
     log.Fatal(err)
@@ -27,6 +33,16 @@ if err := c.CRDInstall(ctx, gwpapi.CRDInstallOptions{}); err != nil {
 if err := c.PairInstall(ctx, 1, gwpapi.PairInstallOptions{}); err != nil {
     log.Fatal(err)
 }
+
+// Verify health
+vr, _ := c.PairVerify(ctx, 1, gwpapi.PairVerifyOptions{})
+if !vr.Healthy {
+    log.Fatalf("pair 1 not healthy")
+}
+
+// Inspect embedded charts
+charts, _ := c.ChartsList()
+fmt.Println(charts.Charts[0].AppVersion) // e.g. "v1.8.0"
 
 // Check status
 s, err := c.PairGet(ctx, 1)
@@ -212,10 +228,76 @@ Tools that need finer-grained control can import the sub-packages directly:
 |---|---|
 | `github.com/dio/gateway-pairs/names` | Name derivation (no I/O, no dependencies) |
 | `github.com/dio/gateway-pairs/crd` | CRD detection and installation |
-| `github.com/dio/gateway-pairs/pair` | Pair install, delete, status, list |
+| `github.com/dio/gateway-pairs/pair` | Pair install, delete, status, verify, list |
+| `github.com/dio/gateway-pairs/preflight` | Pre-install cluster readiness checks |
+| `github.com/dio/gateway-pairs/gwpcharts` | Embedded chart introspection and export |
 | `github.com/dio/gateway-pairs/charts` | Access to embedded chart and CRD FS |
 
 The `internal/` packages (`kube`, `helm`) are not exported.
+
+---
+
+## Preflight
+
+```go
+// Run all checks on a fresh cluster before installing pair 1.
+r, err := c.Preflight(ctx, gwpapi.PreflightOptions{
+    PairIndex:     1,
+    UnsafeContext: false, // set true for non-k3d clusters
+    Out:           os.Stdout,
+})
+// r.Failures > 0 means at least one check blocked.
+// r.Warnings > 0 means warnings only (proceed is OK).
+for _, check := range r.Checks {
+    fmt.Printf("[%s] %s\n", check.Status, check.Message)
+}
+```
+
+`PreflightOptions.PairIndex` enables pair-specific conflict checks (6-8):
+GatewayClass name, controllerName uniqueness, namespace existence. Pass 0
+to run only global checks (1-5).
+
+---
+
+## PairVerify
+
+```go
+vr, err := c.PairVerify(ctx, 1, gwpapi.PairVerifyOptions{
+    Diagnose: false, // set true to print ConfigMap+logs on failure
+    Out:      os.Stdout,
+})
+if !vr.Healthy {
+    for _, ch := range vr.Checks {
+        if !ch.OK {
+            fmt.Printf("FAIL: %s -- %s\n", ch.Name, ch.Message)
+        }
+    }
+}
+```
+
+Checks: controller Available, GatewayClass Accepted, L3 Gateways Programmed.
+Exits without reinstalling. Use after `PairInstall` to confirm health, or after
+a manual fix to verify recovery.
+
+---
+
+## Charts
+
+```go
+// List embedded charts and CRD bundles (no cluster access).
+list, err := c.ChartsList()
+for _, ch := range list.Charts {
+    fmt.Printf("%s %s (EG %s)\n", ch.Name, ch.Version, ch.AppVersion)
+}
+
+// Export eg-pair chart to disk (for direct Helm use).
+if err := c.ChartsExport("./my-charts"); err != nil { ... }
+
+// Print default values.yaml.
+values, err := c.ChartsShowValues("eg-pair")
+fmt.Println(values)
+```
+
 
 ---
 
