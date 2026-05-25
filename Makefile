@@ -19,7 +19,7 @@ BIN = bin/gwp
 
 .PHONY: all build generate-crds generate-assets dep-update tidy tidy-check vet test \
         helm-lint cluster cluster-delete crds-install pair-install pair-delete \
-        e2e e2e-all e2e-simple e2e-simple-gwp clean
+        e2e e2e-all e2e-simple e2e-simple-gwp e2e-flux clean
 
 all: build
 
@@ -125,7 +125,7 @@ pair-delete:
 	helm --kube-context $(KTX) uninstall eg-pair-$(PAIR) -n $(RELEASE_NS) || true
 
 ## e2e: run full multi-pair e2e suite (PAIR_PREFIX=tr, PAIR_COUNT=2 by default)
-e2e: dep-update
+e2e: build
 	cd e2e && PAIR_PREFIX=$(PAIR_PREFIX) PAIR_COUNT=$(PAIR_COUNT) RUN_E2E=1 \
 	  go test -v -count=1 -run TestGatewayPairs -timeout 30m ./multipairs/...
 
@@ -133,9 +133,14 @@ e2e: dep-update
 docs:
 	go run cmd/gwp-gendocs/main.go
 
+## e2e-flux: run Flux CD integration e2e (local k3d + local OCI registry, no remote Git)
+e2e-flux: dep-update
+	cd e2e && RUN_E2E=1 \
+	  go test -v -count=1 -run TestFluxIntegration -timeout 25m ./integrations/flux/...
+
 ## e2e-all: run all e2e suites in parallel (requires --jobs/-j)
 e2e-all:
-	$(MAKE) -j3 e2e-simple e2e-simple-gwp e2e
+	$(MAKE) -j4 e2e-simple e2e-simple-gwp e2e e2e-flux
 
 
 e2e-simple: dep-update
