@@ -76,15 +76,20 @@ func (s *fluxSuite) Test04_GatewayProgrammed() {
 	time.Sleep(500 * time.Millisecond)
 
 	// Poll until port-forward tunnel is ready, then verify HTTP 200.
+	var lastErr string
 	var lastOut string
 	s.Eventually(func() bool {
 		out, curlErr := sh.Output(s.h.Ctx, "curl",
 			"-s", "-o", "/dev/null", "-w", "%{http_code}",
-			"--connect-timeout", "1", "--max-time", "2",
+			"--connect-timeout", "2", "--max-time", "3",
 			"http://127.0.0.1:18080/")
-		lastOut = out
-		return curlErr == nil && strings.TrimSpace(out) == "200"
-	}, 2*time.Minute, 2*time.Second, "HTTP GET via proxy returned %s", lastOut)
+		lastOut = strings.TrimSpace(out)
+		if curlErr != nil {
+			lastErr = curlErr.Error()
+			return false
+		}
+		return lastOut == "200"
+	}, 2*time.Minute, 3*time.Second, "HTTP GET via proxy returned %s (err: %s)", lastOut, lastErr)
 }
 
 // Test05_DeleteOrdering verifies that deleting the Gateway before the HelmRelease
