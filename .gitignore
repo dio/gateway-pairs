@@ -1,16 +1,10 @@
-# Helm
-charts/*/charts/
+# Helm tarballs (except committed subcharts)
 *.tgz
+!charts/eg-pair/charts/*.tgz
 
 # Build artifacts
 bin/
 dist/
-
-# Generated CRD YAML (produced by make generate-crds, not committed)
-charts/crds/*.yaml
-
-# Subchart tarballs (fetched by helm dependency update, not committed)
-charts/eg-pair/charts/
 
 # Go workspace sum (generated)
 go.work.sum
