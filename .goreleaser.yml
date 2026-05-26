@@ -34,7 +34,6 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -57,9 +56,7 @@ release:
     - glob: charts/crds/gateway-api-standard.yaml
 
 brews:
-  - name: gwp
-    directory: Formula
-    repository:
+  - repository:
       owner: dio
       name: homebrew-tap
       branch: main
@@ -67,6 +64,7 @@ brews:
     commit_author:
       name: Dhi Aurrahman
       email: dio@rockybars.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
     homepage: "https://github.com/dio/gateway-pairs"
     description: "Deploy Envoy Gateway as isolated controller+dataplane pairs in a Kubernetes cluster"
     license: "Apache-2.0"
