@@ -42,74 +42,6 @@ controller:
   # a cluster-scoped webhook, they would interfere with each other's proxies.
   # Enable only if you have a single pair and need zone-aware proxy spreading.
   topologyInjector: false
-  # runtimeFlags are environment variables passed to the EG controller process.
-  # These are merged into the envoy-gateway.yaml ConfigMap under runtimeFlags.
-  # Useful for debugging (LOG_LEVEL=debug) or performance tuning (GODEBUG flags).
-  #
-  # When using gwp pair install or raw helm, pass these via --set:
-  #   --set gateway-helm.config.envoyGateway.runtimeFlags.GODEBUG=madvdontneed=1
-  #   --set gateway-helm.config.envoyGateway.runtimeFlags.LOG_LEVEL=debug
-  #
-  # Or populate this section and use it as a values override file:
-  #   gwp pair install --values custom-values.yaml
-  #
-  # Example:
-  #   runtimeFlags:
-  #     GODEBUG: madvdontneed=1
-  #     LOG_LEVEL: debug
-  runtimeFlags: {}
-  # watch controls which namespaces the EG controller watches for Gateways.
-  # The controller automatically watches the system and dataplane namespaces
-  # for this pair (computed from pair.namePrefix + pair.index).
-  # Override watch.namespaces only for advanced scenarios (e.g., watching
-  # additional namespaces). Leave empty to use the default set.
-  #
-  # When using gwp pair install or raw helm, override watch.namespaces via --set:
-  #   --set gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-1,tr-dataplane-1,extra-ns}
-  #
-  # Or populate this section and use it as a values override file:
-  #   gwp pair install --values custom-values.yaml
-  watch:
-    # type must be "Namespaces" (the only supported value for multi-pair).
-    type: Namespaces
-    # namespaces is a list that overrides the default watch set.
-    # Default (when empty): [<systemNamespace>, <dataplaneNamespace>]
-    # When set: these namespaces are watched instead.
-    # WARNING: if you override this, ensure both system and dataplane namespaces
-    # are included, or the controller will not reconcile Gateways in one of them.
-    namespaces: []
-
-# Rate-limit deployment controls.
-# The Envoy Gateway rate-limit sidecar is enabled by default (3 replicas).
-# Use these fields to customize or disable it.
-#
-# When using gwp pair install with CLI, override via:
-#   gwp pair install 1 --ratelimit-disabled              (to disable)
-#   gwp pair install 1 --ratelimit-image <repo:tag>      (to override image)
-#
-# Or use --set directly:
-#   --set gateway-helm.config.envoyGateway.provider.kubernetes.rateLimitDeployment.replicas=0
-#   --set gateway-helm.config.envoyGateway.provider.kubernetes.rateLimitDeployment.image.repository=myregistry.io/custom-ratelimit
-#   --set gateway-helm.config.envoyGateway.provider.kubernetes.rateLimitDeployment.image.tag=v2.0
-#
-# Examples:
-#   ratelimit:
-#     enabled: false    # disable rate-limit sidecar
-#   ratelimit:
-#     image: "myregistry.io/ratelimit:v2.0"
-ratelimit:
-  # enabled controls whether the rate-limit sidecar is deployed.
-  # Leave null to use the gateway-helm default (typically enabled with 3 replicas).
-  # Set to false to disable entirely (replicas=0).
-  # Set to true to enable with defaults.
-  enabled: null
-  
-  # image overrides the rate-limit container image.
-  # Leave null to use the gateway-helm default.
-  # Useful for air-gapped environments or custom rate-limit implementations.
-  # Format: "repository:tag" or "repository" (no tag uses default from upstream).
-  # Examples: "myregistry.io/ratelimit:v2.0", "gcr.io/my-project/ratelimit"
-  image: null
 
 # Default Gateway and EnvoyProxy are off by default.
 # eg-pair is a pure infrastructure scaffold; operators apply their own
@@ -138,18 +70,16 @@ rbac:
 # Values passed to the gateway-helm subchart.
 # Static defaults -- the same for every pair.
 #
-# Per-pair values (controllerName, watch.namespaces) are computed from
-# pair.namePrefix + pair.index and injected by `gwp pair install` (or make pair-install)
-# at install time via --set flags:
+# Per-pair values (controllerName, watch.namespaces) cannot be derived by the
+# chart itself because Helm subchart values are resolved before template
+# rendering. They are computed from pair.namePrefix + pair.index and injected
+# by `gwp pair install` (or make pair-install) at install time:
 #
 #   --set "gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-1"
 #   --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces"
 #   --set "gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces={tr-system-1,tr-dataplane-1}"
 #
 # Do not set these manually. Use gwp pair install or make pair-install.
-#
-# To pass runtimeFlags or override watch.namespaces (advanced), use the
-# controller.runtimeFlags and controller.watch sections above.
 gateway-helm:
   config:
     envoyGateway:
