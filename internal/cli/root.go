@@ -247,6 +247,8 @@ func newPairInstallCmd() *cobra.Command {
 	var extraSet []string
 	var helmTimeout time.Duration
 	var waitTimeout time.Duration
+	var ratelimitDisabled bool
+	var ratelimitImage string
 
 	cmd := &cobra.Command{
 		Use:   "install <index>",
@@ -260,16 +262,22 @@ func newPairInstallCmd() *cobra.Command {
 			ctx := context.Background()
 			c := apiClient()
 			return c.PairInstall(ctx, index, gwpapi.PairInstallOptions{
-				ExtraSet:    extraSet,
-				HelmTimeout: helmTimeout,
-				WaitTimeout: waitTimeout,
-				Out:         cmd.OutOrStdout(),
+				ExtraSet:          extraSet,
+				RatelimitDisabled: ratelimitDisabled,
+				RatelimitImage:    ratelimitImage,
+				HelmTimeout:       helmTimeout,
+				WaitTimeout:       waitTimeout,
+				Out:               cmd.OutOrStdout(),
 			})
 		},
 	}
 
 	cmd.Flags().StringArrayVar(&extraSet, "set", nil,
 		"additional --set flags passed to helm (repeatable)")
+	cmd.Flags().BoolVar(&ratelimitDisabled, "ratelimit-disabled", false,
+		"disable the rate-limit sidecar deployment (sets replicas=0)")
+	cmd.Flags().StringVar(&ratelimitImage, "ratelimit-image", "",
+		"override rate-limit container image (format: repository[:tag])")
 	cmd.Flags().DurationVar(&helmTimeout, "helm-timeout", 5*time.Minute,
 		"timeout for helm upgrade --install")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute,

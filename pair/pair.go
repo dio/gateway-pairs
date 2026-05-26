@@ -71,7 +71,19 @@ type InstallOptions struct {
 	// (use numeric index) from explicit "--no-suffix" (empty suffix, no index).
 	UseSuffix bool
 	// ExtraSet are additional --set flags passed to helm.
+	// Examples:
+	//   - gateway-helm.config.envoyGateway.runtimeFlags.GODEBUG=madvdontneed=1
+	//   - gateway-helm.config.envoyGateway.runtimeFlags.LOG_LEVEL=debug
+	//   - gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces[0]=tr-system-1
+	//   - gateway-helm.config.envoyGateway.provider.kubernetes.watch.namespaces[1]=tr-dataplane-1
 	ExtraSet []string
+	// RatelimitDisabled, when true, disables the rate-limit deployment.
+	// Sets spec.replicas to 0 via --set.
+	RatelimitDisabled bool
+	// RatelimitImage, when non-empty, overrides the rate-limit container image.
+	// Format: "repository:tag" or "repository" (no tag).
+	// Example: "myregistry.io/ratelimit:v2.0"
+	RatelimitImage string
 	// HelmTimeout is the --timeout value for helm upgrade --install.
 	HelmTimeout time.Duration
 	// WaitTimeout is how long to poll for readiness after helm returns.
@@ -128,6 +140,18 @@ func Install(ctx context.Context, helmClient Helmer, kubeClient Kubectl, index i
 	}
 	for _, s := range opts.ExtraSet {
 		args = append(args, "--set", s)
+	}
+
+	// Apply rate-limit overrides
+	if opts.RatelimitDisabled {
+		args = append(args, "--set", "gateway-helm.config.envoyGateway.provider.kubernetes.rateLimitDeployment.replicas=0")
+	}
+	if opts.RatelimitImage != "" {
+		repo, tag := parseImageTag(opts.RatelimitImage)
+		args = append(args, "--set", "gateway-helm.config.envoyGateway.provider.kubernetes.rateLimitDeployment.image.repository="+repo)
+		if tag != "" {
+			args = append(args, "--set", "gateway-helm.config.envoyGateway.provider.kubernetes.rateLimitDeployment.image.tag="+tag)
+		}
 	}
 
 	fmt.Fprintf(opts.Out, "Installing %s into %s...\n", n.ReleaseName, n.SystemNS)
@@ -385,6 +409,19 @@ func gatewayStatus(ctx context.Context, k Kubectl, gwName, ns string) GatewaySta
 	}
 
 	return gs
+}
+
+// parseImageTag splits an image string "repository:tag" into (repository, tag).
+// If no tag is present, returns (image, "").
+// Examples:
+//   "myregistry.io/ratelimit:v2.0" → ("myregistry.io/ratelimit", "v2.0")
+//   "myregistry.io/ratelimit" → ("myregistry.io/ratelimit", "")
+func parseImageTag(image string) (string, string) {
+	parts := strings.Split(image, ":")
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return image, ""
 }
 
 func helmTimeout(d time.Duration) string {

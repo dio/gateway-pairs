@@ -23,7 +23,7 @@ Load when working in this repo:
 - **Names come from `names.For(prefix, index)`.** Never hardcode `tr-system-1`
   or `tr-1` outside the `names` package or chart helpers.
 - **Three required per-pair flags.** `gwp pair install` and `make pair-install`
-  both inject these automatically. Raw `helm install` callers must pass them:
+  both inject these automatically via `--set`:
   ```
   --set gateway-helm.config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/tr-1
   --set gateway-helm.config.envoyGateway.provider.kubernetes.watch.type=Namespaces
@@ -32,6 +32,9 @@ Load when working in this repo:
   Without `controllerName`, all controllers use the upstream default and fight
   over each other's GatewayClasses. Without `watch.namespaces`, Gateways in
   `tr-dataplane-{i}` are invisible to the controller.
+  **Advanced:** To pass runtimeFlags or override the watch namespace set, use
+  the `controller.runtimeFlags` and `controller.watch.*` sections in the chart
+  values or pass them via `--set` in ExtraSet (see eg-pair/values.yaml for examples).
 - **CRDs from upstream only.** `make generate-crds` pre-renders from
   `gateway-crds-helm:v1.8.0` into `charts/crds/`. The binary embeds those.
   `eg-crds` chart was deleted.

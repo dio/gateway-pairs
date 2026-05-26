@@ -116,6 +116,13 @@ type PairStatus = pair.Status
 type PairInstallOptions struct {
 	// ExtraSet are additional --set flags passed to helm.
 	ExtraSet []string
+	// RatelimitDisabled disables the rate-limit deployment.
+	// When true, sets replicas=0 via --set.
+	RatelimitDisabled bool
+	// RatelimitImage overrides the rate-limit container image.
+	// Format: "repository:tag" or "repository"
+	// Example: "gcr.io/myproject/ratelimit:v1.5"
+	RatelimitImage string
 	// HelmTimeout is the helm upgrade --install timeout. Default: 5m.
 	HelmTimeout time.Duration
 	// WaitTimeout is the readiness polling timeout. Default: 3m.
@@ -127,13 +134,15 @@ type PairInstallOptions struct {
 // PairInstall installs or upgrades pair index.
 func (c *Client) PairInstall(ctx context.Context, index int, opts PairInstallOptions) error {
 	return pair.Install(ctx, c.helm, c.kube, index, pair.InstallOptions{
-		Prefix:      c.opts.Prefix,
-		Suffix:      c.opts.Suffix,
-		UseSuffix:   c.opts.UseSuffix,
-		ExtraSet:    opts.ExtraSet,
-		HelmTimeout: opts.HelmTimeout,
-		WaitTimeout: opts.WaitTimeout,
-		Out:         opts.Out,
+		Prefix:            c.opts.Prefix,
+		Suffix:            c.opts.Suffix,
+		UseSuffix:         c.opts.UseSuffix,
+		ExtraSet:          opts.ExtraSet,
+		RatelimitDisabled: opts.RatelimitDisabled,
+		RatelimitImage:    opts.RatelimitImage,
+		HelmTimeout:       opts.HelmTimeout,
+		WaitTimeout:       opts.WaitTimeout,
+		Out:               opts.Out,
 	})
 }
 
